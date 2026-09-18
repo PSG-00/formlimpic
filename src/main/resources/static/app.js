@@ -377,11 +377,11 @@ function renderCreate() {
             <input name="start" type="datetime-local" required>
           </label>
           <label class="field">
-            <span>만료 · 기기 현지 시간</span>
+            <span>신청 마감 · 기기 현지 시간</span>
             <input name="end" type="datetime-local" required>
           </label>
         </div>
-        <div class="notice">신청 시각 이전 제출은 정상 신청자 뒤에 배정됩니다. 만료 후 이름·멤버십 코드·순위·접수 시각이 공개됩니다.</div>
+        <div class="notice">신청 시각 이전 제출은 정상 신청자 뒤에 배정됩니다. 마감 후 이름·멤버십 코드·순위·접수 시각이 공개됩니다.</div>
         <button>폼림픽 생성하기</button>
       </form>
     </div>
@@ -416,14 +416,14 @@ async function renderDetail(id) {
       <h1>${esc(f.title)}</h1>
       <div class="content">${esc(f.content)}</div>
       <hr>
-      <p>신청 시작 ${date(f.startsAt)}<br>만료 ${date(f.expiresAt)}<br><span class="small">한국 시간(KST) 기준</span></p>
+      <p>신청 시작 ${date(f.startsAt)}<br>신청 마감 ${date(f.expiresAt)}<br><span class="small">한국 시간(KST) 기준</span></p>
       <div class="muted">서버 시각 추정 · 실제 판정은 서버 접수 시각 기준</div>
       <div class="clock" id="clock"></div>
       <div class="notice">
         📌 <strong>폼림픽 참여 안내</strong><br>
         • 신청 시작 10분 전부터 폼을 미리 작성할 수 있습니다.<br>
         • <strong>신청 시각 이전 제출(조기 제출)은 정상 신청자 뒤에 배정</strong>되니 시작 시각에 맞춰 제출하세요.<br>
-        • 만료 시간에 최종 순위가 공개됩니다. 마이페이지에서 디스코드 웹훅을 등록할 시 알림이 발송됩니다.<br>
+        • 신청 마감 시간에 최종 순위가 공개됩니다. 마이페이지에서 디스코드 웹훅을 등록할 시 알림이 발송됩니다.<br>
         • 연습용 서비스이므로 실제 개인정보 대신 가상 정보를 입력하세요.
       </div>
       <button id="enter"></button>
