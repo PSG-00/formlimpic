@@ -381,7 +381,7 @@ function renderCreate() {
             <input name="end" type="datetime-local" required>
           </label>
         </div>
-        <div class="notice">정각 이전 제출은 정상 신청자 뒤에 배정됩니다. 만료 후 이름·멤버십 코드·순위·접수 시각이 공개됩니다.</div>
+        <div class="notice">신청 시각 이전 제출은 정상 신청자 뒤에 배정됩니다. 만료 후 이름·멤버십 코드·순위·접수 시각이 공개됩니다.</div>
         <button>폼림픽 생성하기</button>
       </form>
     </div>
@@ -419,7 +419,12 @@ async function renderDetail(id) {
       <p>신청 시작 ${date(f.startsAt)}<br>만료 ${date(f.expiresAt)}<br><span class="small">한국 시간(KST) 기준</span></p>
       <div class="muted">서버 시각 추정 · 실제 판정은 서버 접수 시각 기준</div>
       <div class="clock" id="clock"></div>
-      <div class="notice">실제 개인정보를 입력하지 마세요. 조기 제출은 정상 신청자 뒤로 배정됩니다.</div>
+      <div class="notice">
+        📌 <strong>폼림픽 참여 안내</strong><br>
+        • 신청 시작 10분 전부터 폼을 미리 작성할 수 있습니다.<br>
+        • <strong>신청 시각 이전 제출(조기 제출)은 정상 신청자 뒤에 배정</strong>되니 시작 시각에 맞춰 제출하세요.<br>
+        • 연습용 서비스이므로 실제 개인정보 대신 가상 정보를 입력하세요.
+      </div>
       <button id="enter"></button>
       <section id="mine"></section>
       <section id="results"></section>
@@ -539,7 +544,7 @@ async function renderWizard(id) {
               </dl>
               <p>신청 시작 ${date(d.form.startsAt)}</p>
               <div class="clock" id="liveclock"></div>
-              <div class="notice">시계는 참고용입니다. 시작 전 제출하면 정상 신청자 뒤에 배정되며, 제출 후 수정할 수 없습니다.</div>
+              <div class="notice">시계는 참고용입니다. 신청 시각 이전에 제출(조기 제출)하면 정상 신청자 뒤에 배정되며, 제출 후 수정할 수 없습니다.</div>
             `}
           </div>
           <div class="actions">
