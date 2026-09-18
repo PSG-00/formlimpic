@@ -12,16 +12,25 @@ import java.util.zip.CRC32;
 
 /** Single-process durable admission journal. Never acknowledge before force(true). */
 public final class ReceiptStore implements AutoCloseable {
-    public record Form(String id, String title, String content, Instant startsAt, Instant expiresAt) {}
+    public record User(String id, String username, String passwordHash, String membershipCode, Instant createdAt) {}
+    public record Form(String id, String owner, String title, String content, Instant startsAt, Instant expiresAt) {
+        public Form(String id, String title, String content, Instant startsAt, Instant expiresAt) {
+            this(id, "", title, content, startsAt, expiresAt);
+        }
+    }
     public record Ticket(String id, String formId, String owner, String code) {}
     public record Receipt(String id, String formId, String ticketId, String name, String phone,
                           String code, Instant receivedAt, long sequence, boolean early) {}
+    public record SubmissionSummary(Form form, Ticket ticket, Receipt receipt, int rank) {}
     public record Event(long sequence, Properties values) {}
     private final FileChannel channel;
     private final FileLock lock;
     private final Clock clock;
     private final SecureRandom random = new SecureRandom();
     private final List<Event> events = new ArrayList<>();
+    private final Map<String, User> usersById = new HashMap<>();
+    private final Map<String, User> usersByUsername = new HashMap<>();
+    private final Map<String, User> usersByMembershipCode = new HashMap<>();
     private final Map<String, Form> forms = new LinkedHashMap<>();
     private final Map<String, Ticket> tickets = new HashMap<>();
     private final Map<String, Receipt> receipts = new HashMap<>();
@@ -70,20 +79,53 @@ public final class ReceiptStore implements AutoCloseable {
     private void apply(Event e) {
         Properties p = e.values(); String id = p.getProperty("id");
         switch (p.getProperty("type")) {
-            case "form" -> forms.put(id, new Form(id, p.getProperty("title"), p.getProperty("content"), Instant.parse(p.getProperty("start")), Instant.parse(p.getProperty("end"))));
+            case "user" -> {
+                String code = p.getProperty("code", "");
+                User u = new User(id, p.getProperty("username"), p.getProperty("hash"), code, Instant.parse(p.getProperty("time")));
+                usersById.put(u.id(), u);
+                usersByUsername.put(u.username(), u);
+                if (!code.isBlank()) usersByMembershipCode.put(code, u);
+            }
+            case "form" -> forms.put(id, new Form(id, p.getProperty("owner", ""), p.getProperty("title"), p.getProperty("content"), Instant.parse(p.getProperty("start")), Instant.parse(p.getProperty("end"))));
             case "ticket" -> tickets.put(id, new Ticket(id, p.getProperty("form"), p.getProperty("owner"), p.getProperty("code")));
             case "receipt" -> receipts.put(p.getProperty("ticket"), new Receipt(id, p.getProperty("form"), p.getProperty("ticket"), p.getProperty("name"), p.getProperty("phone"), p.getProperty("code"), Instant.parse(p.getProperty("time")), e.sequence(), Boolean.parseBoolean(p.getProperty("early"))));
             default -> throw new IllegalStateException("Unknown journal event");
         }
     }
+    public synchronized User registerUser(String username, String passwordHash) {
+        username = text(username, 30);
+        if (usersByUsername.containsKey(username)) throw new IllegalArgumentException("이미 사용 중인 아이디입니다.");
+        if (usersByMembershipCode.size() >= 308915776) throw new IllegalStateException("발급 가능한 멤버십 코드가 소진되었습니다.");
+        String code;
+        do {
+            StringBuilder b = new StringBuilder();
+            for (int i = 0; i < 6; i++) b.append((char) ('A' + random.nextInt(26)));
+            code = b.toString();
+        } while (usersByMembershipCode.containsKey(code));
+        String id = UUID.randomUUID().toString();
+        Instant time = now();
+        append(props("type", "user", "id", id, "username", username, "hash", passwordHash, "code", code, "time", time.toString()));
+        return usersById.get(id);
+    }
+    public synchronized Optional<User> findUserByUsername(String username) {
+        if (username == null) return Optional.empty();
+        return Optional.ofNullable(usersByUsername.get(username));
+    }
+    public synchronized Optional<User> findUserById(String id) {
+        if (id == null) return Optional.empty();
+        return Optional.ofNullable(usersById.get(id));
+    }
     public synchronized List<Form> forms() { return new ArrayList<>(forms.values()); }
     public synchronized Form form(String id) { Form f = forms.get(id); if (f == null) throw new IllegalArgumentException("폼림픽을 찾을 수 없습니다."); return f; }
     public Instant now() { return clock.instant(); }
     public synchronized Form create(String title, String content, Instant start, Instant end) {
+        return create("", title, content, start, end);
+    }
+    public synchronized Form create(String owner, String title, String content, Instant start, Instant end) {
         title = text(title, 120); content = text(content, 10000);
         if (start == null || end == null || !start.isAfter(now()) || !end.isAfter(start)) throw new IllegalArgumentException("시작은 현재 이후, 만료는 시작 이후여야 합니다.");
         String id = UUID.randomUUID().toString();
-        append(props("type", "form", "id", id, "title", title, "content", content, "start", start.toString(), "end", end.toString()));
+        append(props("type", "form", "id", id, "owner", owner != null ? owner : "", "title", title, "content", content, "start", start.toString(), "end", end.toString()));
         return forms.get(id);
     }
     private void open(Form f, Instant time) {
@@ -94,10 +136,15 @@ public final class ReceiptStore implements AutoCloseable {
         Form f = form(formId);
         for (Ticket t : tickets.values()) if (t.formId().equals(formId) && t.owner().equals(owner)) return t;
         open(f, now());
-        Set<String> used = new HashSet<>(); tickets.values().stream().filter(t -> t.formId().equals(formId)).forEach(t -> used.add(t.code()));
-        if (used.size() >= 308915776) throw new IllegalStateException("발급 가능한 코드가 소진되었습니다.");
         String code;
-        do { StringBuilder b = new StringBuilder(); for (int i = 0; i < 6; i++) b.append((char) ('A' + random.nextInt(26))); code = b.toString(); } while (used.contains(code));
+        User user = usersById.get(owner);
+        if (user != null && user.membershipCode() != null && !user.membershipCode().isBlank()) {
+            code = user.membershipCode();
+        } else {
+            Set<String> used = new HashSet<>(); tickets.values().stream().filter(t -> t.formId().equals(formId)).forEach(t -> used.add(t.code()));
+            if (used.size() >= 308915776) throw new IllegalStateException("발급 가능한 코드가 소진되었습니다.");
+            do { StringBuilder b = new StringBuilder(); for (int i = 0; i < 6; i++) b.append((char) ('A' + random.nextInt(26))); code = b.toString(); } while (used.contains(code));
+        }
         String id = UUID.randomUUID().toString();
         append(props("type", "ticket", "id", id, "form", formId, "owner", owner, "code", code)); return tickets.get(id);
     }
@@ -116,6 +163,35 @@ public final class ReceiptStore implements AutoCloseable {
     public synchronized List<Receipt> results(String formId) {
         if (now().isBefore(form(formId).expiresAt())) throw new IllegalArgumentException("만료 후 결과가 공개됩니다.");
         return receipts.values().stream().filter(r -> r.formId().equals(formId)).sorted(Comparator.comparing(Receipt::early).thenComparingLong(Receipt::sequence)).toList();
+    }
+    public synchronized List<Form> myForms(String owner) {
+        if (owner == null || owner.isBlank()) return List.of();
+        List<Form> list = new ArrayList<>();
+        for (Form f : forms.values()) if (owner.equals(f.owner())) list.add(f);
+        Collections.reverse(list);
+        return list;
+    }
+    public synchronized List<SubmissionSummary> mySubmissions(String owner) {
+        if (owner == null || owner.isBlank()) return List.of();
+        List<SubmissionSummary> list = new ArrayList<>();
+        for (Ticket t : tickets.values()) {
+            if (owner.equals(t.owner())) {
+                Receipt r = receipts.get(t.id());
+                if (r != null) {
+                    Form f = forms.get(t.formId());
+                    int rank = 0;
+                    if (f != null && !now().isBefore(f.expiresAt())) {
+                        List<Receipt> res = results(f.id());
+                        for (int i = 0; i < res.size(); i++) {
+                            if (res.get(i).ticketId().equals(t.id())) { rank = i + 1; break; }
+                        }
+                    }
+                    list.add(new SubmissionSummary(f, t, r, rank));
+                }
+            }
+        }
+        list.sort((a, b) -> b.receipt().receivedAt().compareTo(a.receipt().receivedAt()));
+        return list;
     }
     public synchronized List<Event> eventsAfter(long sequence) { return events.stream().filter(e -> e.sequence() > sequence).limit(100).toList(); }
     private static String text(String value, int max) { if (value == null || value.isBlank() || value.length() > max) throw new IllegalArgumentException("필수 항목과 입력 길이를 확인하세요."); return value.trim(); }

@@ -68,4 +68,49 @@ class ReceiptStoreTests {
             assertEquals(s.ticket(f.id(), "owner"), s.ticket(f.id(), "owner"));
         }
     }
+    @Test void userRegistrationAndLookupAndDuplication() throws Exception {
+        TestClock clock = new TestClock(); Path path = dir.resolve("user_journal");
+        String userId;
+        try (ReceiptStore s = new ReceiptStore(path, clock)) {
+            var user = s.registerUser("tester", "encoded_hash_123");
+            userId = user.id();
+            assertEquals("tester", user.username());
+            assertEquals("encoded_hash_123", user.passwordHash());
+            assertNotNull(user.membershipCode());
+            assertTrue(user.membershipCode().matches("[A-Z]{6}"));
+            assertTrue(s.findUserByUsername("tester").isPresent());
+            assertTrue(s.findUserById(userId).isPresent());
+            assertThrows(IllegalArgumentException.class, () -> s.registerUser("tester", "new_hash"));
+        }
+        try (ReceiptStore restored = new ReceiptStore(path, clock)) {
+            var restoredUser = restored.findUserByUsername("tester");
+            assertTrue(restoredUser.isPresent());
+            assertEquals(userId, restoredUser.get().id());
+            assertEquals("encoded_hash_123", restoredUser.get().passwordHash());
+            assertTrue(restoredUser.get().membershipCode().matches("[A-Z]{6}"));
+        }
+    }
+    @Test void myFormsAndMySubmissionsTracking() throws Exception {
+        TestClock clock = new TestClock(); Path path = dir.resolve("mypage_journal");
+        try (ReceiptStore s = new ReceiptStore(path, clock)) {
+            var user = s.registerUser("alice", "hash_alice");
+            var f = s.create(user.id(), "Alice's Contest", "desc", clock.value.plusSeconds(10), clock.value.plusSeconds(30));
+            assertEquals(1, s.myForms(user.id()).size());
+            assertEquals("Alice's Contest", s.myForms(user.id()).get(0).title());
+
+            clock.value = clock.value.plusSeconds(10);
+            s.ticket(f.id(), user.id());
+            s.submit(f.id(), user.id(), "Alice", "010-0000-0000");
+
+            var submissions = s.mySubmissions(user.id());
+            assertEquals(1, submissions.size());
+            assertEquals("Alice", submissions.get(0).receipt().name());
+            assertEquals(user.membershipCode(), submissions.get(0).ticket().code());
+            assertEquals(0, submissions.get(0).rank()); // Not expired yet
+
+            clock.value = clock.value.plusSeconds(25); // Expired
+            var expiredSubmissions = s.mySubmissions(user.id());
+            assertEquals(1, expiredSubmissions.get(0).rank()); // 1st rank
+        }
+    }
 }
