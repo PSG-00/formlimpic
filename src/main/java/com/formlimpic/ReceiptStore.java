@@ -1,0 +1,123 @@
+package com.formlimpic;
+
+import java.io.*;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
+import java.nio.file.*;
+import java.security.SecureRandom;
+import java.time.*;
+import java.util.*;
+import java.util.zip.CRC32;
+
+/** Single-process durable admission journal. Never acknowledge before force(true). */
+public final class ReceiptStore implements AutoCloseable {
+    public record Form(String id, String title, String content, Instant startsAt, Instant expiresAt) {}
+    public record Ticket(String id, String formId, String owner, String code) {}
+    public record Receipt(String id, String formId, String ticketId, String name, String phone,
+                          String code, Instant receivedAt, long sequence, boolean early) {}
+    public record Event(long sequence, Properties values) {}
+    private final FileChannel channel;
+    private final FileLock lock;
+    private final Clock clock;
+    private final SecureRandom random = new SecureRandom();
+    private final List<Event> events = new ArrayList<>();
+    private final Map<String, Form> forms = new LinkedHashMap<>();
+    private final Map<String, Ticket> tickets = new HashMap<>();
+    private final Map<String, Receipt> receipts = new HashMap<>();
+    private boolean failed;
+
+    public ReceiptStore(Path path, Clock clock) throws IOException {
+        this.clock = clock;
+        Files.createDirectories(path.toAbsolutePath().getParent());
+        channel = FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
+        lock = channel.tryLock();
+        if (lock == null) { channel.close(); throw new IOException("Journal already in use"); }
+        try { recover(); } catch (Exception e) { close(); throw e; }
+    }
+    private void recover() throws IOException {
+        long good = 0;
+        while (channel.position() < channel.size()) {
+            if (channel.size() - channel.position() < 8) break;
+            ByteBuffer header = ByteBuffer.allocate(8); readFully(header); header.flip();
+            int length = header.getInt(), checksum = header.getInt();
+            if (length < 1 || length > 1_000_000) throw new IOException("Invalid journal frame");
+            if (channel.size() - channel.position() < length) break;
+            ByteBuffer body = ByteBuffer.allocate(length); readFully(body);
+            CRC32 crc = new CRC32(); crc.update(body.array());
+            if ((int) crc.getValue() != checksum) throw new IOException("Journal checksum mismatch; restore from backup");
+            Properties p = new Properties(); p.load(new ByteArrayInputStream(body.array()));
+            Event event = new Event(events.size() + 1L, p); apply(event); events.add(event);
+            good = channel.position();
+        }
+        channel.truncate(good); channel.position(good); channel.force(true);
+    }
+    private void readFully(ByteBuffer b) throws IOException { while (b.hasRemaining()) if (channel.read(b) < 0) throw new EOFException(); }
+    private void append(Properties p) {
+        if (failed) throw new IllegalStateException("접수 기록 장치에 문제가 있습니다. 잠시 후 다시 시도하세요.");
+        try {
+            ByteArrayOutputStream out = new ByteArrayOutputStream(); p.store(out, null);
+            byte[] bytes = out.toByteArray(); CRC32 crc = new CRC32(); crc.update(bytes);
+            ByteBuffer frame = ByteBuffer.allocate(8 + bytes.length).putInt(bytes.length).putInt((int) crc.getValue()).put(bytes);
+            frame.flip(); while (frame.hasRemaining()) channel.write(frame);
+            channel.force(true);
+            Event event = new Event(events.size() + 1L, p); apply(event); events.add(event);
+        } catch (IOException e) { failed = true; throw new IllegalStateException("접수 기록에 실패했습니다. 같은 화면에서 다시 시도하세요.", e); }
+    }
+    private static Properties props(String... pairs) {
+        Properties p = new Properties(); for (int i = 0; i < pairs.length; i += 2) p.setProperty(pairs[i], pairs[i + 1]); return p;
+    }
+    private void apply(Event e) {
+        Properties p = e.values(); String id = p.getProperty("id");
+        switch (p.getProperty("type")) {
+            case "form" -> forms.put(id, new Form(id, p.getProperty("title"), p.getProperty("content"), Instant.parse(p.getProperty("start")), Instant.parse(p.getProperty("end"))));
+            case "ticket" -> tickets.put(id, new Ticket(id, p.getProperty("form"), p.getProperty("owner"), p.getProperty("code")));
+            case "receipt" -> receipts.put(p.getProperty("ticket"), new Receipt(id, p.getProperty("form"), p.getProperty("ticket"), p.getProperty("name"), p.getProperty("phone"), p.getProperty("code"), Instant.parse(p.getProperty("time")), e.sequence(), Boolean.parseBoolean(p.getProperty("early"))));
+            default -> throw new IllegalStateException("Unknown journal event");
+        }
+    }
+    public synchronized List<Form> forms() { return new ArrayList<>(forms.values()); }
+    public synchronized Form form(String id) { Form f = forms.get(id); if (f == null) throw new IllegalArgumentException("폼림픽을 찾을 수 없습니다."); return f; }
+    public Instant now() { return clock.instant(); }
+    public synchronized Form create(String title, String content, Instant start, Instant end) {
+        title = text(title, 120); content = text(content, 10000);
+        if (start == null || end == null || !start.isAfter(now()) || !end.isAfter(start)) throw new IllegalArgumentException("시작은 현재 이후, 만료는 시작 이후여야 합니다.");
+        String id = UUID.randomUUID().toString();
+        append(props("type", "form", "id", id, "title", title, "content", content, "start", start.toString(), "end", end.toString()));
+        return forms.get(id);
+    }
+    private void open(Form f, Instant time) {
+        if (time.isBefore(f.startsAt().minusSeconds(600))) throw new IllegalArgumentException("신청 시작 10분 전부터 작성할 수 있습니다.");
+        if (!time.isBefore(f.expiresAt())) throw new IllegalArgumentException("신청이 마감되었습니다.");
+    }
+    public synchronized Ticket ticket(String formId, String owner) {
+        Form f = form(formId);
+        for (Ticket t : tickets.values()) if (t.formId().equals(formId) && t.owner().equals(owner)) return t;
+        open(f, now());
+        Set<String> used = new HashSet<>(); tickets.values().stream().filter(t -> t.formId().equals(formId)).forEach(t -> used.add(t.code()));
+        if (used.size() >= 308915776) throw new IllegalStateException("발급 가능한 코드가 소진되었습니다.");
+        String code;
+        do { StringBuilder b = new StringBuilder(); for (int i = 0; i < 6; i++) b.append((char) ('A' + random.nextInt(26))); code = b.toString(); } while (used.contains(code));
+        String id = UUID.randomUUID().toString();
+        append(props("type", "ticket", "id", id, "form", formId, "owner", owner, "code", code)); return tickets.get(id);
+    }
+    public synchronized Receipt mine(String formId, String owner) {
+        return tickets.values().stream().filter(t -> t.formId().equals(formId) && t.owner().equals(owner)).map(t -> receipts.get(t.id())).filter(Objects::nonNull).findFirst().orElse(null);
+    }
+    public synchronized Receipt submit(String formId, String owner, String name, String phone) {
+        Receipt existing = mine(formId, owner); if (existing != null) return existing;
+        name = text(name, 40); phone = text(phone, 30);
+        Ticket t = tickets.values().stream().filter(x -> x.formId().equals(formId) && x.owner().equals(owner)).findFirst().orElseThrow(() -> new IllegalArgumentException("먼저 멤버십 코드를 발급받으세요."));
+        Form f = form(formId);
+        Instant time = now(); open(f, time);
+        append(props("type", "receipt", "id", UUID.randomUUID().toString(), "form", formId, "ticket", t.id(), "name", name, "phone", phone, "code", t.code(), "time", time.toString(), "early", Boolean.toString(time.isBefore(f.startsAt()))));
+        return receipts.get(t.id());
+    }
+    public synchronized List<Receipt> results(String formId) {
+        if (now().isBefore(form(formId).expiresAt())) throw new IllegalArgumentException("만료 후 결과가 공개됩니다.");
+        return receipts.values().stream().filter(r -> r.formId().equals(formId)).sorted(Comparator.comparing(Receipt::early).thenComparingLong(Receipt::sequence)).toList();
+    }
+    public synchronized List<Event> eventsAfter(long sequence) { return events.stream().filter(e -> e.sequence() > sequence).limit(100).toList(); }
+    private static String text(String value, int max) { if (value == null || value.isBlank() || value.length() > max) throw new IllegalArgumentException("필수 항목과 입력 길이를 확인하세요."); return value.trim(); }
+    @Override public synchronized void close() throws IOException { if (lock.isValid()) lock.release(); channel.close(); }
+}

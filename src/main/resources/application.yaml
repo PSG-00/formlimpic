@@ -1,3 +1,14 @@
 spring:
   application:
     name: formlimpic
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/formlimpic}
+    username: ${DB_USERNAME:formlimpic}
+    password: ${DB_PASSWORD:formlimpic-local}
+    hikari:
+      initialization-fail-timeout: -1
+      connection-timeout: 1000
+      maximum-pool-size: 5
+
+formlimpic:
+  journal: ${JOURNAL_PATH:./data/receipts.log}
