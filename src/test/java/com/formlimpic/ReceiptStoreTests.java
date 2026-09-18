@@ -113,4 +113,31 @@ class ReceiptStoreTests {
             assertEquals(1, expiredSubmissions.get(0).rank()); // 1st rank
         }
     }
+    @Test void updateWebhookAndNotificationTracking() throws Exception {
+        TestClock clock = new TestClock(); Path path = dir.resolve("webhook_journal");
+        String userId;
+        try (ReceiptStore s = new ReceiptStore(path, clock)) {
+            var user = s.registerUser("bob", "hash");
+            userId = user.id();
+            assertEquals("", user.discordWebhookUrl());
+            assertThrows(IllegalArgumentException.class, () -> s.updateWebhook(userId, "https://invalid-url.com"));
+
+            var updated = s.updateWebhook(userId, "https://discord.com/api/webhooks/123/xyz");
+            assertEquals("https://discord.com/api/webhooks/123/xyz", updated.discordWebhookUrl());
+
+            var f = s.create(userId, "Bob's Form", "desc", clock.value.plusSeconds(5), clock.value.plusSeconds(10));
+            assertTrue(s.unnotifiedExpiredForms().isEmpty());
+
+            clock.value = clock.value.plusSeconds(15);
+            assertEquals(1, s.unnotifiedExpiredForms().size());
+
+            s.markFormNotified(f.id());
+            assertTrue(s.unnotifiedExpiredForms().isEmpty());
+        }
+        try (ReceiptStore restored = new ReceiptStore(path, clock)) {
+            var restoredUser = restored.findUserById(userId).orElseThrow();
+            assertEquals("https://discord.com/api/webhooks/123/xyz", restoredUser.discordWebhookUrl());
+            assertTrue(restored.unnotifiedExpiredForms().isEmpty());
+        }
+    }
 }

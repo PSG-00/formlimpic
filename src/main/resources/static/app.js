@@ -212,6 +212,19 @@ async function renderMyPage(tab = 'submissions') {
         </p>
       </div>
 
+      <div class="webhook-card">
+        <div class="eyebrow">DISCORD NOTIFICATION</div>
+        <h2 style="margin:6px 0 10px;font-size:18px;">디스코드 결과 알림 웹훅</h2>
+        <p class="small" style="margin:0 0 8px;">참여한 폼림픽이 마감되면 최종 순위와 접수 기록을 디스코드 채널로 실시간 발송해 드립니다.</p>
+        <form id="webhook-form">
+          <div class="webhook-row">
+            <input name="webhook" placeholder="https://discord.com/api/webhooks/..." value="${esc(currentUser.discordWebhookUrl || '')}">
+            <button type="submit" class="secondary">저장</button>
+            <button type="button" id="btn-test-webhook" class="secondary" style="background:#f9f9f9;">테스트 전송</button>
+          </div>
+        </form>
+      </div>
+
       <div class="tab-bar">
         <button type="button" class="tab-btn ${tab === 'submissions' ? 'active' : ''}" id="tab-submissions">내가 참여한 폼림픽</button>
         <button type="button" class="tab-btn ${tab === 'forms' ? 'active' : ''}" id="tab-forms">내가 만든 폼림픽</button>
@@ -220,6 +233,36 @@ async function renderMyPage(tab = 'submissions') {
       <div id="tab-content">불러오는 중...</div>
     </div>
   `;
+
+  document.querySelector('#webhook-form').onsubmit = async e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const b = e.submitter;
+    if (b) b.disabled = true;
+    try {
+      const res = await api('/my/webhook', 'PUT', { webhookUrl: f.get('webhook') });
+      currentUser = res.user;
+      toast('디스코드 웹훅 주소가 저장되었습니다.');
+    } catch (err) {
+      toast(err.message);
+    } finally {
+      if (b) b.disabled = false;
+    }
+  };
+
+  document.querySelector('#btn-test-webhook').onclick = async e => {
+    const btn = e.target;
+    btn.disabled = true;
+    const url = document.querySelector('[name="webhook"]').value.trim();
+    try {
+      const res = await api('/my/webhook/test', 'POST', { webhookUrl: url });
+      toast(res.message);
+    } catch (err) {
+      toast(err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  };
 
   document.querySelector('#tab-submissions').onclick = () => location.hash = 'my/submissions';
   document.querySelector('#tab-forms').onclick = () => location.hash = 'my/forms';
@@ -288,11 +331,11 @@ async function renderHome() {
   app.innerHTML = `
     <section class="hero">
       <div>
-        <div class="eyebrow">THE PERFECT TIMING</div>
-        <h1>정각의 순간,<br>폼림픽으로 연습하세요.</h1>
+        <div class="eyebrow">THE PERFECT TIMING · RESCENE</div>
+        <h1>리센느 사전 녹화 신청,<br>폼림픽으로 연습하세요.</h1>
         <p>미리 작성하고, 원하는 순간에 제출하세요.<br>접수 시간부터 최종 순위까지 한눈에 확인할 수 있어요.</p>
       </div>
-      <div class="hero-art">⏱</div>
+      <img src="/hero.jpg" class="hero-art" alt="리센느">
     </section>
     <div class="notice">연습용 서비스입니다. 이름과 연락처에는 반드시 가상 정보를 입력하세요.</div>
     <div class="section-head">
@@ -331,11 +374,11 @@ function renderCreate() {
         <div class="dates">
           <label class="field">
             <span>신청 시작 · 기기 현지 시간</span>
-            <input name="start" type="datetime-local" step="1" required>
+            <input name="start" type="datetime-local" required>
           </label>
           <label class="field">
             <span>만료 · 기기 현지 시간</span>
-            <input name="end" type="datetime-local" step="1" required>
+            <input name="end" type="datetime-local" required>
           </label>
         </div>
         <div class="notice">정각 이전 제출은 정상 신청자 뒤에 배정됩니다. 만료 후 이름·멤버십 코드·순위·접수 시각이 공개됩니다.</div>

@@ -28,6 +28,7 @@ public class DatabaseWriter {
             if (!initialized) {
                 jdbc.execute("CREATE TABLE IF NOT EXISTS users (id UUID PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, membership_code CHAR(6) UNIQUE, created_at TIMESTAMPTZ NOT NULL)");
                 jdbc.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS membership_code CHAR(6) UNIQUE");
+                jdbc.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_webhook_url TEXT");
                 jdbc.execute("CREATE TABLE IF NOT EXISTS forms (id UUID PRIMARY KEY, owner_id UUID, title TEXT NOT NULL, content TEXT NOT NULL, starts_at TIMESTAMPTZ NOT NULL, expires_at TIMESTAMPTZ NOT NULL)");
                 jdbc.execute("ALTER TABLE forms ADD COLUMN IF NOT EXISTS owner_id UUID");
                 jdbc.execute("CREATE TABLE IF NOT EXISTS memberships (id UUID PRIMARY KEY, form_id UUID NOT NULL REFERENCES forms(id), owner_id UUID NOT NULL, code CHAR(6) NOT NULL, UNIQUE(form_id, code), UNIQUE(form_id, owner_id))");
@@ -43,7 +44,9 @@ public class DatabaseWriter {
     private void save(ReceiptStore.Event e) {
         Properties p = e.values();
         switch (p.getProperty("type")) {
-            case "user" -> jdbc.update("INSERT INTO users (id, username, password_hash, membership_code, created_at) VALUES (?::uuid, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING", p.getProperty("id"), p.getProperty("username"), p.getProperty("hash"), p.getProperty("code"), time(p, "time"));
+            case "user" -> jdbc.update("INSERT INTO users (id, username, password_hash, membership_code, discord_webhook_url, created_at) VALUES (?::uuid, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING", p.getProperty("id"), p.getProperty("username"), p.getProperty("hash"), p.getProperty("code"), p.getProperty("webhook", ""), time(p, "time"));
+            case "user_webhook" -> jdbc.update("UPDATE users SET discord_webhook_url = ? WHERE id = ?::uuid", p.getProperty("webhook"), p.getProperty("userId"));
+            case "form_notified" -> {}
             case "form" -> {
                 String owner = p.getProperty("owner");
                 Object ownerId = (owner != null && owner.matches("[0-9a-f-]{36}")) ? java.util.UUID.fromString(owner) : null;

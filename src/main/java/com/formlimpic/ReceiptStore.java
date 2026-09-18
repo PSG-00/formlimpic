@@ -12,7 +12,7 @@ import java.util.zip.CRC32;
 
 /** Single-process durable admission journal. Never acknowledge before force(true). */
 public final class ReceiptStore implements AutoCloseable {
-    public record User(String id, String username, String passwordHash, String membershipCode, Instant createdAt) {}
+    public record User(String id, String username, String passwordHash, String membershipCode, String discordWebhookUrl, Instant createdAt) {}
     public record Form(String id, String owner, String title, String content, Instant startsAt, Instant expiresAt) {
         public Form(String id, String title, String content, Instant startsAt, Instant expiresAt) {
             this(id, "", title, content, startsAt, expiresAt);
@@ -31,6 +31,7 @@ public final class ReceiptStore implements AutoCloseable {
     private final Map<String, User> usersById = new HashMap<>();
     private final Map<String, User> usersByUsername = new HashMap<>();
     private final Map<String, User> usersByMembershipCode = new HashMap<>();
+    private final Set<String> notifiedFormIds = new HashSet<>();
     private final Map<String, Form> forms = new LinkedHashMap<>();
     private final Map<String, Ticket> tickets = new HashMap<>();
     private final Map<String, Receipt> receipts = new HashMap<>();
@@ -81,11 +82,24 @@ public final class ReceiptStore implements AutoCloseable {
         switch (p.getProperty("type")) {
             case "user" -> {
                 String code = p.getProperty("code", "");
-                User u = new User(id, p.getProperty("username"), p.getProperty("hash"), code, Instant.parse(p.getProperty("time")));
+                String webhook = p.getProperty("webhook", "");
+                User u = new User(id, p.getProperty("username"), p.getProperty("hash"), code, webhook, Instant.parse(p.getProperty("time")));
                 usersById.put(u.id(), u);
                 usersByUsername.put(u.username(), u);
                 if (!code.isBlank()) usersByMembershipCode.put(code, u);
             }
+            case "user_webhook" -> {
+                String userId = p.getProperty("userId");
+                String webhook = p.getProperty("webhook", "");
+                User old = usersById.get(userId);
+                if (old != null) {
+                    User u = new User(old.id(), old.username(), old.passwordHash(), old.membershipCode(), webhook, old.createdAt());
+                    usersById.put(u.id(), u);
+                    usersByUsername.put(u.username(), u);
+                    if (!u.membershipCode().isBlank()) usersByMembershipCode.put(u.membershipCode(), u);
+                }
+            }
+            case "form_notified" -> notifiedFormIds.add(id);
             case "form" -> forms.put(id, new Form(id, p.getProperty("owner", ""), p.getProperty("title"), p.getProperty("content"), Instant.parse(p.getProperty("start")), Instant.parse(p.getProperty("end"))));
             case "ticket" -> tickets.put(id, new Ticket(id, p.getProperty("form"), p.getProperty("owner"), p.getProperty("code")));
             case "receipt" -> receipts.put(p.getProperty("ticket"), new Receipt(id, p.getProperty("form"), p.getProperty("ticket"), p.getProperty("name"), p.getProperty("phone"), p.getProperty("code"), Instant.parse(p.getProperty("time")), e.sequence(), Boolean.parseBoolean(p.getProperty("early"))));
@@ -192,6 +206,34 @@ public final class ReceiptStore implements AutoCloseable {
         }
         list.sort((a, b) -> b.receipt().receivedAt().compareTo(a.receipt().receivedAt()));
         return list;
+    }
+    public synchronized User updateWebhook(String userId, String webhookUrl) {
+        User old = usersById.get(userId);
+        if (old == null) throw new IllegalArgumentException("사용자를 찾을 수 없습니다.");
+        String cleaned = webhookUrl != null ? webhookUrl.trim() : "";
+        if (!cleaned.isBlank() && !cleaned.startsWith("https://discord.com/api/webhooks/") && !cleaned.startsWith("https://discordapp.com/api/webhooks/")) {
+            throw new IllegalArgumentException("올바른 디스코드 웹훅 URL을 입력해주세요.");
+        }
+        append(props("type", "user_webhook", "id", UUID.randomUUID().toString(), "userId", userId, "webhook", cleaned));
+        return usersById.get(userId);
+    }
+    public synchronized List<Form> unnotifiedExpiredForms() {
+        Instant current = now();
+        List<Form> list = new ArrayList<>();
+        for (Form f : forms.values()) {
+            if (!current.isBefore(f.expiresAt()) && !notifiedFormIds.contains(f.id())) {
+                list.add(f);
+            }
+        }
+        return list;
+    }
+    public synchronized void markFormNotified(String formId) {
+        if (!notifiedFormIds.contains(formId)) {
+            append(props("type", "form_notified", "id", formId));
+        }
+    }
+    public synchronized Optional<Ticket> ticketById(String ticketId) {
+        return Optional.ofNullable(tickets.get(ticketId));
     }
     public synchronized List<Event> eventsAfter(long sequence) { return events.stream().filter(e -> e.sequence() > sequence).limit(100).toList(); }
     private static String text(String value, int max) { if (value == null || value.isBlank() || value.length() > max) throw new IllegalArgumentException("필수 항목과 입력 길이를 확인하세요."); return value.trim(); }

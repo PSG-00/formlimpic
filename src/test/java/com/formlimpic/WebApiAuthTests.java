@@ -23,7 +23,8 @@ class WebApiAuthTests {
     void authFlowAndMyPage() throws Exception {
         ReceiptStore store = new ReceiptStore(dir.resolve("auth_journal"), Clock.systemUTC());
         BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
-        WebApi api = new WebApi(store, encoder);
+        DiscordWebhookService discordService = new DiscordWebhookService(store);
+        WebApi api = new WebApi(store, encoder, discordService);
         MockMvc mockMvc = MockMvcBuilders.standaloneSetup(api).build();
 
         MockHttpSession session = new MockHttpSession();
@@ -50,7 +51,16 @@ class WebApiAuthTests {
                 .andExpect(jsonPath("$.user.username").value("john_doe"))
                 .andExpect(jsonPath("$.user.membershipCode").isString());
 
-        // 4. Create Form (authorized)
+        // 4. Update Webhook URL
+        mockMvc.perform(put("/api/my/webhook")
+                        .session(session)
+                        .header("X-Formlimpic", "formlimpic")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"webhookUrl\":\"https://discord.com/api/webhooks/123/abc\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.user.discordWebhookUrl").value("https://discord.com/api/webhooks/123/abc"));
+
+        // 5. Create Form (authorized)
         String nowPlus1h = Instant.now().plusSeconds(3600).toString();
         String nowPlus2h = Instant.now().plusSeconds(7200).toString();
         mockMvc.perform(post("/api/forms")
@@ -61,12 +71,12 @@ class WebApiAuthTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.title").value("선착순 이벤트"));
 
-        // 5. My forms
+        // 6. My forms
         mockMvc.perform(get("/api/my/forms").session(session))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.forms[0].title").value("선착순 이벤트"));
 
-        // 6. Logout
+        // 7. Logout
         mockMvc.perform(post("/api/auth/logout")
                         .session(session)
                         .header("X-Formlimpic", "formlimpic"))
