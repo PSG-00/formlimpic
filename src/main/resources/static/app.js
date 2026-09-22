@@ -444,6 +444,11 @@ function renderCreate() {
             <input name="end" type="datetime-local" required>
           </label>
         </div>
+        <label class="checkbox-field">
+          <input name="hasBubble" type="checkbox">
+          <span>버블(Bubble) 항목 추가</span>
+        </label>
+        <p class="small muted" style="margin-top:-2px;margin-bottom:18px;">체크 시 폼 신청 시 마지막에 버블 인증 입력란이 추가됩니다.</p>
         <div class="notice">신청 시각 이전 제출은 정상 신청자 뒤에 배정됩니다. 마감 후 이름·멤버십 코드·순위·접수 시각이 공개됩니다.</div>
         <button>폼림픽 생성하기</button>
       </form>
@@ -459,7 +464,8 @@ function renderCreate() {
         title: f.get('title'),
         content: f.get('content'),
         startsAt: new Date(f.get('start')).toISOString(),
-        expiresAt: new Date(f.get('end')).toISOString()
+        expiresAt: new Date(f.get('end')).toISOString(),
+        hasBubble: f.get('hasBubble') === 'on'
       });
       location.hash = 'form/' + r.id;
     } catch (x) {
@@ -595,10 +601,11 @@ async function renderWizard(id) {
     return;
   }
   const t = await api('/forms/' + id + '/ticket', 'POST');
-  const totalSteps = 4;
+  const hasBubble = !!d.form.hasBubble;
+  const totalSteps = hasBubble ? 5 : 4;
   let step = 0;
   const key = 'draft:' + id + ':' + (currentUser ? currentUser.id : '');
-  let draft = { name: '', birthDate: '', phone: '' };
+  let draft = { name: '', birthDate: '', phone: '', bubble: '' };
   try {
     draft = { ...draft, ...JSON.parse(sessionStorage.getItem(key)) };
   } catch {}
@@ -627,10 +634,13 @@ async function renderWizard(id) {
               <h2>생년월일 *</h2>
               <div class="notice">절대 실제 개인정보를 적지 마세요. 가상의 생년월일을 입력하세요.</div>
               <input name="birthDate" maxlength="20" required value="${esc(draft.birthDate)}" placeholder="예: 000101 (YYMMDD 6자리)" autocomplete="off" autofocus>
-            ` : `
+            ` : step === 3 ? `
               <h2>연락처 *</h2>
               <div class="notice">절대 실제 개인정보를 적지 마세요. 실제 전화번호 대신 가상 값을 입력하세요.</div>
               <input name="phone" maxlength="30" required value="${esc(draft.phone)}" placeholder="예: 01012345678" autocomplete="off" autofocus>
+            ` : `
+              <h2>버블(Bubble) *</h2>
+              <input name="bubble" maxlength="50" required value="${esc(draft.bubble)}" placeholder="예: 원이" autocomplete="off" autofocus>
             `}
           </div>
           <div class="actions">
@@ -677,7 +687,7 @@ async function renderWizard(id) {
   };
 
   function save() {
-    for (const k of ['name', 'birthDate', 'phone']) {
+    for (const k of ['name', 'birthDate', 'phone', 'bubble']) {
       const el = document.querySelector(`[name="${k}"]`);
       if (el) draft[k] = el.value;
     }
