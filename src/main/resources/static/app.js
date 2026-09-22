@@ -549,11 +549,11 @@ async function renderWizard(id) {
             ` : step === 3 ? `
               <h2>연습용 연락처 *</h2>
               <div class="notice">절대 실제 개인정보를 적지 마세요. 실제 전화번호 대신 가상 값을 입력하세요.</div>
-              <input name="phone" maxlength="30" required value="${esc(draft.phone)}" placeholder="예: 010-0000-0000" autocomplete="off" autofocus>
+              <input name="phone" maxlength="30" required value="${esc(draft.phone)}" placeholder="예: 01012345678" autocomplete="off" autofocus>
             ` : `
               <h2>연습용 버블(Bubble) *</h2>
-              <div class="notice">절대 실제 개인정보를 적지 마세요. 가상의 버블 구독 정보 또는 닉네임을 입력하세요.</div>
-              <input name="bubble" maxlength="50" required value="${esc(draft.bubble)}" placeholder="예: 토끼 (또는 구독일수)" autocomplete="off" autofocus>
+              <div class="notice">절대 실제 개인정보를 적지 마세요. 가상의 버블 닉네임을 입력하세요.</div>
+              <input name="bubble" maxlength="50" required value="${esc(draft.bubble)}" placeholder="예: 원이" autocomplete="off" autofocus>
             `}
           </div>
           <div class="actions">
