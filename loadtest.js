@@ -25,13 +25,21 @@ const HEADERS = {
 };
 
 export function setup() {
-  const adminName = 'admin_' + Date.now();
+  const adminName = 'adm_' + Math.floor(Math.random() * 1000000);
   const signupRes = http.post(
     `${BASE_URL}/auth/signup`,
     JSON.stringify({ username: adminName, password: 'adminPassword123!' }),
     { headers: HEADERS }
   );
   check(signupRes, { 'Admin signed up': (r) => r.status === 200 });
+  if (signupRes.status !== 200) {
+    console.error(`Admin signup failed (${signupRes.status}): ${signupRes.body}`);
+  }
+
+  const sessionCookie = signupRes.cookies && signupRes.cookies['JSESSIONID']
+    ? `JSESSIONID=${signupRes.cookies['JSESSIONID'][0].value}`
+    : '';
+  const formHeaders = Object.assign({}, HEADERS, sessionCookie ? { Cookie: sessionCookie } : {});
 
   // 1,000명이 가입 및 티켓 발급을 여유 있게 마칠 수 있도록 25초 뒤 시작으로 설정
   const now = Date.now();
@@ -47,9 +55,12 @@ export function setup() {
       expiresAt: expiresAt,
       hasBubble: true,
     }),
-    { headers: HEADERS }
+    { headers: formHeaders }
   );
   check(formRes, { 'Form created': (r) => r.status === 200 });
+  if (formRes.status !== 200) {
+    console.error(`Form create failed (${formRes.status}): ${formRes.body}`);
+  }
   const form = JSON.parse(formRes.body);
 
   return {
