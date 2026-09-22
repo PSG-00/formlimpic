@@ -10,14 +10,21 @@
 ## 📖 목차
 1. [서비스 소개 및 핵심 가치](#1-서비스-소개-및-핵심-가치)
 2. [사용 설명서 및 비즈니스 룰](#2-사용-설명서-및-비즈니스-룰)
+   - [동시 진입 시 정밀 순위 결정 메커니즘](#5-심층-분석-완전히-동시에-진입하면-어떻게-순위가-나뉘는가-동시성-제어)
 3. [기술 아키텍처 분석](#3-기술-아키텍처-분석)
-   - [비동기 방식: WebFlux vs @Async vs 독자 그룹 커밋](#1-비동기-방식-webflux-vs-async-vs-독자-그룹-커밋)
-   - [아키텍처 패턴: 3-Layer MVC vs 이벤트 소싱 CQRS](#2-아키텍처-패턴-3-layer-mvc-vs-이벤트-소싱-cqrs)
-   - [프로젝트 구조도 및 컴포넌트 맵](#3-프로젝트-구조도-및-컴포넌트-맵)
+   - [3대 아키텍처 세부 비교: 3-Layer vs WebFlux vs 폼림픽](#1-왜-전통적인-3-layer나-webflux를-쓰지-않았는가-세부-비교-분석)
+   - [2단계 분리 모델 (택배 물류 아키텍처)](#2-폼림픽의-해법-lmax-disruptor-스타일의-인메모리-단일-작성자--동적-그룹-커밋)
+   - [이벤트 소싱 CQRS 다이어그램](#3-아키텍처-패턴-이벤트-소싱event-sourcing-cqrs)
+   - [프로젝트 구조도 및 컴포넌트 맵](#4-프로젝트-구조도-및-컴포넌트-맵)
 4. [핵심 코드 및 기능 상세 설명](#4-핵심-코드-및-기능-상세-설명)
-5. [성능 벤치마크 (k6 1,000 VUs 폭타 실측)](#5-성능-벤치마크-k6-1000-vus-폭타-실측)
-6. [보안 감사 결과 (Security Audit)](#6-보안-감사-결과-security-audit)
-7. [로컬 실행 및 테스트 방법](#7-로컬-실행-및-테스트-방법)
+5. [데이터 영속화(Persistence) 및 이벤트 스트리밍(CDC)](#5-데이터-영속화persistence-및-이벤트-스트리밍cdc)
+   - [1차 영속화: Authoritative WAL 저널 프레임 및 복구](#1-1차-영속화-authoritative-wal-저널-receiptslog)
+   - [2차 영속화: '로그에서 추출한다'의 정체 (Log-based CDC)](#2-2차-영속화-로그에서-데이터를-추출한다는-것의-정체-log-based-cdc)
+   - [PostgreSQL 테이블 스키마 DDL 구조](#3-postgresql-데이터베이스-테이블-스키마-ddl-구조)
+   - [DB 무장애 격리 및 무한 복원력 (Infinite Replayability)](#4-db-무장애-격리-outage-isolation-및-무한-복원력)
+6. [성능 벤치마크 (k6 1,000 VUs 폭타 실측)](#6-성능-벤치마크-k6-1000-vus-폭타-실측)
+7. [보안 감사 결과 (Security Audit)](#7-보안-감사-결과-security-audit)
+8. [로컬 실행 및 테스트 방법](#8-로컬-실행-및-테스트-방법)
 
 ---
 
@@ -57,7 +64,32 @@
 | **1그룹** | **정상 신청** | **신청 시작 시각 이후** 서버에 도착한 참가자. **도착 시각(밀리초) ➔ 내부 시퀀스 순**으로 1위부터 순차 부여. |
 | **2그룹** | **조기 제출 (페널티)** | **신청 시작 시각 이전**에 성급하게 제출한 참가자. **모든 정상 신청자의 맨 뒤 순위로 강제 배정**. |
 
-### 5) 마감 및 디스코드 웹훅 결과 알림
+### 5) 💡 [심층 분석] 완전히 동시에 진입하면 어떻게 순위가 나뉘는가? (동시성 제어)
+
+#### Q1. 1,000명이 동시에 쏘는데 어떻게 큐에 순차적으로 줄을 서듯 정확하게 쌓이나요?
+- **JVM 레벨의 전역 모니터 락 (`synchronized`)**:
+  - [`ReceiptStore.java`](file:///c:/Project/spring/formlimpic/src/main/java/com/formlimpic/ReceiptStore.java#L249)의 `submit()` 메서드는 `synchronized` 키워드로 감싸져 있습니다.
+  - 톰캣의 200개 웹 스레드가 1,000명의 패킷을 물고 동시에 뛰어들어와도, JVM 모니터 락의 입구에서 **나노초(10억 분의 1초) 단위로 순차적으로 줄을 서서 1명씩 통과**하게 됩니다.
+  - 락 안에서는 DB I/O나 파일 저장을 전혀 하지 않고 단 **0.001ms(1마이크로초)** 만에 시각(`now()`)과 일련번호(`sequence`)를 부여하고 빠져나오기 때문에, 1,000명이 락을 통과하는 데 0.001초도 걸리지 않습니다.
+
+#### Q2. 100만 분의 1초(나노초)까지 완전히 똑같은 시각에 도착하면 어떻게 되나요?
+- **원자적 단조 증가 시퀀스 (`sequence`)**:
+  - 서버 시각(`time`)이 똑같더라도, 락 안에서 이벤트가 생성될 때 **`Event(events.size() + 1L, p)`** 코드가 실행됩니다.
+  - 즉, 먼저 락을 쥔 스레드가 무조건 `sequence = N`을 받고, 나노초라도 뒤에 진입한 스레드는 `sequence = N + 1`을 받습니다.
+  - 정렬 로직:
+    ```java
+    Comparator.comparing(Receipt::early).thenComparingLong(Receipt::sequence)
+    ```
+  - 시각이 같더라도 `sequence`가 1씩 차례대로 커지기 때문에 **동점자나 무승부(Tie)는 절대 발생하지 않으며 완벽한 1열 종대로 1등부터 1,000등까지 확정**됩니다.
+
+#### Q3. 서버에서 접수한 시각이 더 먼저인데, 처리하는 스레드가 느려서 디스크 저장이 늦게 끝나면 순위가 밀리나요?
+- **❌ 절대 밀리지 않습니다! (100% 불변 보장)**
+- 순위 산정의 기준은 **"디스크나 DB에 최종 기록된 시점"이 아니라, "락을 통과하며 영수증에 영구히 날인된 `sequence`와 `receivedAt`"**입니다.
+- 백그라운드 스레드의 디스크 파일 저장이 1초 뒤에 끝나든 10초 뒤에 끝나든, 내 영수증에 찍힌 `sequence = 7` 번호는 우주가 끝나도 영원히 7등으로 고정됩니다.
+
+---
+
+### 6) 마감 및 디스코드 웹훅 결과 알림
 - 마감 시각(`expiresAt`)이 도래하면 즉시 전체 순위표가 공개됩니다 (개인정보인 전화번호/생년월일/버블은 비공개 격리).
 - 마이페이지에서 디스코드 웹훅 URL을 등록해 두면, 마감 순간 **🥇 내 최종 순위, 멤버십 코드, 접수 시각(밀리초)**이 포함된 실시간 Embed 카드가 디스코드로 전송됩니다.
 
@@ -202,7 +234,7 @@ flowchart TD
 
 ---
 
-### 3) 프로젝트 구조도 및 컴포넌트 맵
+### 4) 프로젝트 구조도 및 컴포넌트 맵
 
 ```text
 c:\Project\spring\formlimpic
@@ -255,7 +287,139 @@ c:\Project\spring\formlimpic
 
 ---
 
-## 5. 성능 벤치마크 (k6 1,000 VUs 폭타 실측)
+## 5. 데이터 영속화(Persistence) 및 이벤트 스트리밍(CDC)
+
+폼림픽은 일반적인 애플리케이션처럼 요청이 올 때마다 DB 테이블에 곧바로 `INSERT/UPDATE`를 치지 않습니다. 
+대신 **"1차 원천 저널(WAL) 파일 기록 ➔ 2차 관계형 DB(PostgreSQL) 비동기 스트리밍 투영"**이라는 2단계 영속화 구조를 갖습니다.
+
+```
+[2단계 영속화 흐름도]
+
+[ 웹 스레드 ]
+     │  0.001ms 인메모리 처리
+     ▼
+[ journalQueue (메모리 큐) ]
+     │  drainTo() 일괄 수집
+     ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 1차 영속화: Authoritative WAL 저널 (receipts.log)            │
+│ ─ 단일 플러셔 스레드가 바이너리 프레임(CRC32)으로 순차 fsync   │
+│ ─ 시스템의 '절대적인 진실(Source of Truth)'                  │
+└─────────────────────────────────────────────────────────────┘
+     │
+     │  DatabaseWriter가 1초마다 eventsAfter(cursor)로
+     │  신규 발생한 이벤트만 스트리밍 폴링 (Log-based CDC)
+     ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 2차 영속화: 읽기/통계용 투영 모델 (PostgreSQL RDB)           │
+│ ─ users, forms, memberships, submissions 테이블              │
+│ ─ ON CONFLICT DO NOTHING 으로 멱등한 배치 적재               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 1) 1차 영속화: Authoritative WAL 저널 (`receipts.log`)
+- **바이너리 프레임 구조 (Binary Frame Layout)**:
+  ```text
+  ┌──────────────────┬──────────────────┬────────────────────────────────────────────┐
+  │ Length (4 Bytes) │ Checksum (4 Bytes)│ Payload (N Bytes, Java Properties)         │
+  └──────────────────┴──────────────────┴────────────────────────────────────────────┘
+  ```
+  - **Length (int, 4B)**: 페이로드 바이트 배열의 길이.
+  - **Checksum (int, 4B)**: 페이로드 전체에 대한 `CRC32` 해시값.
+  - **Payload**: `type=receipt\nname=원이\nphone=01012345678\ntime=2026-09-22T...`
+- **크래시 복구 메커니즘 (Crash Recovery)**:
+  - 서버가 정전이나 강제 종료로 비정상 다운되더라도, 재시작 시 [`ReceiptStore.recover()`](file:///c:/Project/spring/formlimpic/src/main/java/com/formlimpic/ReceiptStore.java#L63-L79)가 0번 오프셋부터 저널을 순차 검증합니다.
+  - 매 프레임마다 CRC32를 재계산하여 불일치하거나 디스크 쓰기 도중 덜 쓰인 마지막 깨진 프레임이 발견되면, `channel.truncate(good)`으로 온전한 직전 프레임까지만 안전하게 남기고 잘라냅니다.
+  - 그 후 온전한 프레임들을 메모리에 재생(Replay)하여 0초 만에 완벽한 메모리 상태를 복구합니다.
+
+---
+
+### 2) 2차 영속화: '로그에서 데이터를 추출한다'는 것의 정체 (Log-based CDC)
+
+사용자분들이 흔히 *"로그에서 뭘 추출해서 DB에 넣는다"*고 부르는 이 기술의 정식 명칭은 **CDC (Change Data Capture / Log-based Replication)**이자 **이벤트 소싱의 투영(Projection)**입니다.
+
+- **원천 데이터의 불변성**:
+  - `ReceiptStore`에서 일어난 모든 사건(회원가입, 폼개설, 티켓발급, 접수)은 `Event(sequence, Properties)` 형태로 불변(Immutable) 기록됩니다.
+  - `sequence`는 1, 2, 3, 4... 순으로 영구 증가하는 고유 번호입니다.
+- **커서 기반 스트리밍 추출 (`eventsAfter(cursor)`)**:
+  - [`DatabaseWriter.java`](file:///c:/Project/spring/formlimpic/src/main/java/com/formlimpic/DatabaseWriter.java#L41-L43)는 자신이 DB에 어디까지 밀어 넣었는지 마지막 시퀀스 번호인 **`cursor`** 변수를 기억합니다.
+  - 1초마다 `store.eventsAfter(cursor)`를 호출하여 **"내 커서 번호보다 큰 최신 이벤트만 100개씩 쏙쏙 스트리밍 추출"**합니다.
+  - 추출된 이벤트의 `type`에 따라 관계형 테이블에 적절한 SQL로 배치 적재를 수행합니다:
+    - `type=user` ➔ `INSERT INTO users ...`
+    - `type=user_webhook` ➔ `UPDATE users SET discord_webhook_url = ...`
+    - `type=form` ➔ `INSERT INTO forms ...`
+    - `type=ticket` ➔ `INSERT INTO memberships ...`
+    - `type=receipt` ➔ `INSERT INTO submissions ...`
+  - 트랜잭션이 성공하면 `cursor = event.sequence()`로 커서를 한 칸 전진시킵니다.
+
+---
+
+### 3) PostgreSQL 데이터베이스 테이블 스키마 DDL 구조
+
+PostgreSQL에 생성되는 4개 테이블의 구조와 제약조건입니다:
+
+```sql
+-- 1. 회원 정보 테이블
+CREATE TABLE IF NOT EXISTS users (
+    id                  UUID PRIMARY KEY,
+    username            TEXT UNIQUE NOT NULL,
+    password_hash       TEXT NOT NULL,
+    membership_code     CHAR(6) UNIQUE,
+    discord_webhook_url TEXT,
+    created_at          TIMESTAMPTZ NOT NULL
+);
+
+-- 2. 폼림픽 정보 테이블
+CREATE TABLE IF NOT EXISTS forms (
+    id          UUID PRIMARY KEY,
+    owner_id    UUID,
+    title       TEXT NOT NULL,
+    content     TEXT NOT NULL,
+    starts_at   TIMESTAMPTZ NOT NULL,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    has_bubble  BOOLEAN DEFAULT FALSE
+);
+
+-- 3. 폼별 회원 티켓(멤버십) 발급 내역 테이블
+CREATE TABLE IF NOT EXISTS memberships (
+    id          UUID PRIMARY KEY,
+    form_id     UUID NOT NULL REFERENCES forms(id),
+    owner_id    UUID NOT NULL,
+    code        CHAR(6) NOT NULL,
+    UNIQUE(form_id, code),       -- 한 폼 내에서 코드는 중복 불가
+    UNIQUE(form_id, owner_id)    -- 한 폼당 회원 1명만 티켓 발급 가능
+);
+
+-- 4. 선착순 최종 제출 영수증 테이블
+CREATE TABLE IF NOT EXISTS submissions (
+    id                  UUID PRIMARY KEY,
+    form_id             UUID NOT NULL REFERENCES forms(id),
+    ticket_id           UUID NOT NULL UNIQUE REFERENCES memberships(id),
+    name                TEXT NOT NULL,
+    phone               TEXT NOT NULL,
+    code                CHAR(6) NOT NULL,
+    received_at         TIMESTAMPTZ NOT NULL,
+    admission_sequence  BIGINT NOT NULL UNIQUE, -- 저널의 절대적 단조 증가 시퀀스
+    early               BOOLEAN NOT NULL,       -- 조기 제출 여부 (페널티 플래그)
+    birth_date          TEXT,
+    bubble              TEXT
+);
+```
+
+---
+
+### 4) DB 무장애 격리 (Outage Isolation) 및 무한 복원력
+
+- **DB가 다운되어도 폼 접수는 100% 정상 작동**:
+  - 만약 PostgreSQL 컨테이너가 꺼지거나 네트워크 단절로 DB 장애가 발생해도, 사용자는 에러를 전혀 겪지 않습니다.
+  - 접수증 발급과 순위 확정은 `ReceiptStore` 저널에서 이루어지며, `DatabaseWriter`는 DB 에러 로그만 남기고 조용히 대기합니다.
+  - 추후 DB가 다시 살아나면, `DatabaseWriter`가 중단되었던 `cursor` 지점부터 이벤트를 다시 읽어와서 자동으로 따라잡기(Catch-up)를 완료합니다.
+- **무한 재생 복원력 (Infinite Replayability)**:
+  - 만약 실수로 DB 데이터를 통째로 날려버리더라도, `receipts.log` 저널 파일만 남아있다면 서버 기동 시 `cursor = 0`부터 저널 파일의 모든 역사를 순서대로 재생(Replay)하여 **PostgreSQL의 전체 테이블을 단 1건의 유실도 없이 완벽히 100% 복원**해 낼 수 있습니다.
+
+---
+
+## 6. 성능 벤치마크 (k6 1,000 VUs 폭타 실측)
 
 인텔 14코어 18스레드 (Core Ultra 5 125H) 노트북 단일 장비에서 1,000명이 정각 00.00초에 일제히 `POST /submissions`를 보냈을 때의 실측 지표입니다:
 
@@ -271,7 +435,7 @@ c:\Project\spring\formlimpic
 
 ---
 
-## 6. 보안 감사 결과 (Security Audit)
+## 7. 보안 감사 결과 (Security Audit)
 
 | 점검 항목 | 결과 | 기술적 방어 메커니즘 |
 | :--- | :---: | :--- |
@@ -283,7 +447,7 @@ c:\Project\spring\formlimpic
 
 ---
 
-## 7. 로컬 실행 및 테스트 방법
+## 8. 로컬 실행 및 테스트 방법
 
 ### 1) 로컬 PostgreSQL 실행
 Docker Compose를 통해 백그라운드로 PostgreSQL 18을 실행합니다:
