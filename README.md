@@ -11,6 +11,7 @@
 1. [서비스 소개 및 핵심 가치](#1-서비스-소개-및-핵심-가치)
 2. [사용 설명서 및 비즈니스 룰](#2-사용-설명서-및-비즈니스-룰)
    - [동시 진입 시 정밀 순위 결정 메커니즘](#5-심층-분석-완전히-동시에-진입하면-어떻게-순위가-나뉘는가-동시성-제어)
+   - [관리자(ADMIN) 권한 및 운영 제어 기능](#7-관리자admin-권한-및-운영-제어-기능)
 3. [기술 아키텍처 분석](#3-기술-아키텍처-분석)
    - [3대 아키텍처 세부 비교: 3-Layer vs WebFlux vs 폼림픽](#1-왜-전통적인-3-layer나-webflux를-쓰지-않았는가-세부-비교-분석)
    - [2단계 분리 모델 (택배 물류 아키텍처)](#2-폼림픽의-해법-lmax-disruptor-스타일의-인메모리-단일-작성자--동적-그룹-커밋)
@@ -92,6 +93,21 @@
 ### 6) 마감 및 디스코드 웹훅 결과 알림
 - 마감 시각(`expiresAt`)이 도래하면 즉시 전체 순위표가 공개됩니다 (개인정보인 전화번호/생년월일/버블은 비공개 격리).
 - 마이페이지에서 디스코드 웹훅 URL을 등록해 두면, 마감 순간 **🥇 내 최종 순위, 멤버십 코드, 접수 시각(밀리초)**이 포함된 실시간 Embed 카드가 디스코드로 전송됩니다.
+
+### 7) 관리자(ADMIN) 권한 및 운영 제어 기능
+- **서버 기동 시 자동 계정 초기화 및 보안 비밀번호 발급**:
+  - `admin` 아이디는 일반 웹 회원가입(`signup`)이 원천 차단됩니다 (시스템 예약어 보호).
+  - 서버 부팅 시 [`AdminInitializer`](file:///src/main/java/com/formlimpic/AdminInitializer.java) 컴포넌트가 `SecureRandom` 기반의 **Google 스타일 고강도 무작위 비밀번호(예: `4xL9-kP2m-8qRt-Wv1Z`)**를 매 실행 시 부여하고, 콘솔 배너 로그에 안전하게 출력합니다.
+  - 상단 내비게이션 바 및 마이페이지에 `👑 관리자` 전용 골드 뱃지가 표시됩니다.
+- **관리자 개설 폼림픽 공식 뱃지 (`adminCreated`)**:
+  - 관리자가 개설한 모든 폼림픽에는 `adminCreated: true` 메타데이터가 영구히 각인됩니다.
+  - 홈 화면의 폼 카드, 마이페이지 목록, 폼 상세 화면 타이틀에 **`👑 관리자`** 뱃지가 표시되어 참가자가 공식 연습 폼임을 한눈에 식별할 수 있습니다.
+- **폼림픽 개설 권한 실시간 제어 (Admin-Only Toggle)**:
+  - 마이페이지 내 `👑 관리자 제어판`에서 [폼림픽 개설 권한]을 **'관리자 전용'** 또는 **'모든 회원 허용'**으로 실시간 전환할 수 있습니다.
+  - 관리자 전용 모드(`adminOnlyFormCreation = true`)가 활성화되면 일반 사용자의 폼 개설 UI가 잠기며, 백엔드 API에서도 인가되지 않은 요청을 원천 차단합니다.
+- **열린 폼림픽 삭제 기능 (Form Deletion)**:
+  - 폼 상세 페이지에서 관리자 계정으로 접속 시 `[🗑️ 폼림픽 삭제]` 버튼이 활성화됩니다.
+  - 삭제 시 인메모리 상태, WAL 저널(`form_deleted` 이벤트 기록), 그리고 비동기 PostgreSQL DB(외래키 제약조건에 맞춰 `submissions` ➔ `memberships` ➔ `forms` 순차 삭제)까지 완벽히 동기화되어 깨끗하게 정리됩니다.
 
 ---
 
@@ -356,7 +372,7 @@ c:\Project\spring\formlimpic
 
 ### 3) PostgreSQL 데이터베이스 테이블 스키마 DDL 구조
 
-PostgreSQL에 생성되는 4개 테이블의 구조와 제약조건입니다:
+PostgreSQL에 생성되는 5개 테이블의 구조와 제약조건입니다:
 
 ```sql
 -- 1. 회원 정보 테이블
@@ -366,6 +382,7 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash       TEXT NOT NULL,
     membership_code     CHAR(6) UNIQUE,
     discord_webhook_url TEXT,
+    role                TEXT DEFAULT 'USER',     -- 일반회원: USER, 관리자: ADMIN
     created_at          TIMESTAMPTZ NOT NULL
 );
 
@@ -403,6 +420,12 @@ CREATE TABLE IF NOT EXISTS submissions (
     early               BOOLEAN NOT NULL,       -- 조기 제출 여부 (페널티 플래그)
     birth_date          TEXT,
     bubble              TEXT
+);
+
+-- 5. 전역 설정 테이블 (관리자 전용 설정 등)
+CREATE TABLE IF NOT EXISTS settings (
+    key                 TEXT PRIMARY KEY,
+    value               TEXT NOT NULL
 );
 ```
 

@@ -13,13 +13,20 @@ import java.util.zip.CRC32;
 
 /** Single-process durable admission journal. Never acknowledge before force(true). */
 public final class ReceiptStore implements AutoCloseable {
-    public record User(String id, String username, String passwordHash, String membershipCode, String discordWebhookUrl, Instant createdAt) {}
-    public record Form(String id, String owner, String title, String content, Instant startsAt, Instant expiresAt, boolean hasBubble) {
+    public record User(String id, String username, String passwordHash, String membershipCode, String discordWebhookUrl, String role, Instant createdAt) {
+        public User(String id, String username, String passwordHash, String membershipCode, String discordWebhookUrl, Instant createdAt) {
+            this(id, username, passwordHash, membershipCode, discordWebhookUrl, "USER", createdAt);
+        }
+    }
+    public record Form(String id, String owner, String title, String content, Instant startsAt, Instant expiresAt, boolean hasBubble, boolean adminCreated) {
+        public Form(String id, String owner, String title, String content, Instant startsAt, Instant expiresAt, boolean hasBubble) {
+            this(id, owner, title, content, startsAt, expiresAt, hasBubble, false);
+        }
         public Form(String id, String owner, String title, String content, Instant startsAt, Instant expiresAt) {
-            this(id, owner, title, content, startsAt, expiresAt, false);
+            this(id, owner, title, content, startsAt, expiresAt, false, false);
         }
         public Form(String id, String title, String content, Instant startsAt, Instant expiresAt) {
-            this(id, "", title, content, startsAt, expiresAt, false);
+            this(id, "", title, content, startsAt, expiresAt, false, false);
         }
     }
     public record Ticket(String id, String formId, String owner, String code) {}
@@ -45,6 +52,7 @@ public final class ReceiptStore implements AutoCloseable {
     private final Map<String, Ticket> tickets = new HashMap<>();
     private final Map<String, Ticket> ticketsByFormAndOwner = new HashMap<>();
     private final Map<String, Receipt> receipts = new HashMap<>();
+    private volatile boolean adminOnlyFormCreation = false;
     private static final Event POISON_PILL = new Event(-1L, new Properties());
     private final BlockingQueue<Event> journalQueue = new LinkedBlockingQueue<>();
     private final Thread flusherThread;
@@ -158,7 +166,10 @@ public final class ReceiptStore implements AutoCloseable {
             case "user" -> {
                 String code = p.getProperty("code", "");
                 String webhook = p.getProperty("webhook", "");
-                User u = new User(id, p.getProperty("username"), p.getProperty("hash"), code, webhook, Instant.parse(p.getProperty("time")));
+                String username = p.getProperty("username");
+                String defaultRole = "admin".equalsIgnoreCase(username) ? "ADMIN" : "USER";
+                String role = p.getProperty("role", defaultRole);
+                User u = new User(id, username, p.getProperty("hash"), code, webhook, role, Instant.parse(p.getProperty("time")));
                 usersById.put(u.id(), u);
                 usersByUsername.put(u.username(), u);
                 if (!code.isBlank()) usersByMembershipCode.put(code, u);
@@ -168,14 +179,57 @@ public final class ReceiptStore implements AutoCloseable {
                 String webhook = p.getProperty("webhook", "");
                 User old = usersById.get(userId);
                 if (old != null) {
-                    User u = new User(old.id(), old.username(), old.passwordHash(), old.membershipCode(), webhook, old.createdAt());
+                    User u = new User(old.id(), old.username(), old.passwordHash(), old.membershipCode(), webhook, old.role(), old.createdAt());
+                    usersById.put(u.id(), u);
+                    usersByUsername.put(u.username(), u);
+                    if (!u.membershipCode().isBlank()) usersByMembershipCode.put(u.membershipCode(), u);
+                }
+            }
+            case "user_password" -> {
+                String userId = p.getProperty("userId");
+                String hash = p.getProperty("hash");
+                User old = usersById.get(userId);
+                if (old != null) {
+                    User u = new User(old.id(), old.username(), hash, old.membershipCode(), old.discordWebhookUrl(), old.role(), old.createdAt());
                     usersById.put(u.id(), u);
                     usersByUsername.put(u.username(), u);
                     if (!u.membershipCode().isBlank()) usersByMembershipCode.put(u.membershipCode(), u);
                 }
             }
             case "form_notified" -> notifiedFormIds.add(id);
-            case "form" -> forms.put(id, new Form(id, p.getProperty("owner", ""), p.getProperty("title"), p.getProperty("content"), Instant.parse(p.getProperty("start")), Instant.parse(p.getProperty("end")), Boolean.parseBoolean(p.getProperty("hasBubble", "false"))));
+            case "form" -> {
+                String owner = p.getProperty("owner", "");
+                boolean adminCreated = Boolean.parseBoolean(p.getProperty("adminCreated", "false"));
+                if (!adminCreated && !owner.isBlank()) {
+                    User u = usersById.get(owner);
+                    if (u != null && "ADMIN".equalsIgnoreCase(u.role())) {
+                        adminCreated = true;
+                    }
+                }
+                forms.put(id, new Form(id, owner, p.getProperty("title"), p.getProperty("content"), Instant.parse(p.getProperty("start")), Instant.parse(p.getProperty("end")), Boolean.parseBoolean(p.getProperty("hasBubble", "false")), adminCreated));
+            }
+            case "form_deleted" -> {
+                forms.remove(id);
+                notifiedFormIds.remove(id);
+                List<String> toRemove = new ArrayList<>();
+                for (Ticket t : tickets.values()) {
+                    if (t.formId().equals(id)) {
+                        toRemove.add(t.id());
+                    }
+                }
+                for (String tid : toRemove) {
+                    Ticket t = tickets.remove(tid);
+                    if (t != null) {
+                        ticketsByFormAndOwner.remove(t.formId() + "\0" + t.owner());
+                    }
+                    receipts.remove(tid);
+                }
+            }
+            case "setting" -> {
+                if ("adminOnlyFormCreation".equals(p.getProperty("key"))) {
+                    adminOnlyFormCreation = Boolean.parseBoolean(p.getProperty("value"));
+                }
+            }
             case "ticket" -> {
                 Ticket t = new Ticket(id, p.getProperty("form"), p.getProperty("owner"), p.getProperty("code"));
                 tickets.put(id, t);
@@ -197,8 +251,28 @@ public final class ReceiptStore implements AutoCloseable {
         } while (usersByMembershipCode.containsKey(code));
         String id = UUID.randomUUID().toString();
         Instant time = now();
-        append(props("type", "user", "id", id, "username", username, "hash", passwordHash, "code", code, "time", time.toString()));
+        String role = "admin".equalsIgnoreCase(username) ? "ADMIN" : "USER";
+        append(props("type", "user", "id", id, "username", username, "hash", passwordHash, "code", code, "role", role, "time", time.toString()));
         return usersById.get(id);
+    }
+    public boolean isAdminOnlyFormCreation() { return adminOnlyFormCreation; }
+    public synchronized void setAdminOnlyFormCreation(boolean adminOnly) {
+        append(props("type", "setting", "key", "adminOnlyFormCreation", "value", Boolean.toString(adminOnly)));
+    }
+    public synchronized void deleteForm(String formId) {
+        if (!forms.containsKey(formId)) throw new IllegalArgumentException("삭제할 폼림픽을 찾을 수 없습니다.");
+        append(props("type", "form_deleted", "id", formId));
+    }
+    public synchronized boolean isOwnerAdmin(String ownerId) {
+        if (ownerId == null || ownerId.isBlank()) return false;
+        User u = usersById.get(ownerId);
+        return u != null && "ADMIN".equalsIgnoreCase(u.role());
+    }
+    public synchronized User updateUserPassword(String userId, String passwordHash) {
+        User u = usersById.get(userId);
+        if (u == null) throw new IllegalArgumentException("사용자를 찾을 수 없습니다.");
+        append(props("type", "user_password", "id", UUID.randomUUID().toString(), "userId", userId, "hash", passwordHash, "time", now().toString()));
+        return usersById.get(userId);
     }
     public synchronized Optional<User> findUserByUsername(String username) {
         if (username == null) return Optional.empty();
@@ -221,7 +295,8 @@ public final class ReceiptStore implements AutoCloseable {
         title = text(title, 120); content = text(content, 10000);
         if (start == null || end == null || !start.isAfter(now()) || !end.isAfter(start)) throw new IllegalArgumentException("시작은 현재 이후, 만료는 시작 이후여야 합니다.");
         String id = UUID.randomUUID().toString();
-        append(props("type", "form", "id", id, "owner", owner != null ? owner : "", "title", title, "content", content, "start", start.toString(), "end", end.toString(), "hasBubble", Boolean.toString(hasBubble)));
+        boolean adminCreated = isOwnerAdmin(owner);
+        append(props("type", "form", "id", id, "owner", owner != null ? owner : "", "title", title, "content", content, "start", start.toString(), "end", end.toString(), "hasBubble", Boolean.toString(hasBubble), "adminCreated", Boolean.toString(adminCreated)));
         return forms.get(id);
     }
     private void open(Form f, Instant time) {

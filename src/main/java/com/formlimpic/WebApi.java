@@ -44,7 +44,12 @@ public class WebApi {
     record Row(int rank, String name, String membershipCode, Instant receivedAt, boolean early) {}
     record AuthRequest(String username, String password) {}
     record WebhookRequest(String webhookUrl) {}
-    record UserProfile(String id, String username, String membershipCode, String discordWebhookUrl) implements java.io.Serializable {}
+    record UserProfile(String id, String username, String membershipCode, String discordWebhookUrl, String role) implements java.io.Serializable {
+        public UserProfile(String id, String username, String membershipCode, String discordWebhookUrl) {
+            this(id, username, membershipCode, discordWebhookUrl, "USER");
+        }
+    }
+    record AdminToggleRequest(boolean adminOnly) {}
 
     @ModelAttribute void headers(HttpServletRequest request, HttpServletResponse response) {
         response.setHeader("Cache-Control", "no-store");
@@ -59,6 +64,14 @@ public class WebApi {
     private UserProfile requireUser(HttpSession session) {
         UserProfile u = current(session);
         if (u == null) throw new IllegalArgumentException("로그인이 필요합니다.");
+        return u;
+    }
+
+    private UserProfile requireAdmin(HttpSession session) {
+        UserProfile u = requireUser(session);
+        if (!"ADMIN".equalsIgnoreCase(u.role())) {
+            throw new IllegalArgumentException("관리자 권한이 필요합니다.");
+        }
         return u;
     }
 
@@ -78,11 +91,14 @@ public class WebApi {
         if (req.username() == null || !req.username().trim().matches("^[a-zA-Z0-9_]{3,20}$")) {
             throw new IllegalArgumentException("아이디는 3~20자의 영문, 숫자, 밑줄(_)만 가능합니다.");
         }
+        if ("admin".equalsIgnoreCase(req.username().trim())) {
+            throw new IllegalArgumentException("해당 아이디는 시스템 예약어로 사용할 수 없습니다.");
+        }
         if (req.password() == null || req.password().length() < 6 || req.password().length() > 50) {
             throw new IllegalArgumentException("비밀번호는 6~50자 사이여야 합니다.");
         }
         ReceiptStore.User user = store.registerUser(req.username().trim(), encoder.encode(req.password()));
-        UserProfile profile = new UserProfile(user.id(), user.username(), user.membershipCode(), user.discordWebhookUrl());
+        UserProfile profile = new UserProfile(user.id(), user.username(), user.membershipCode(), user.discordWebhookUrl(), user.role());
         session.setAttribute("auth_user", profile);
         return Map.of("user", profile);
     }
@@ -95,7 +111,7 @@ public class WebApi {
         if (!encoder.matches(req.password(), user.passwordHash())) {
             throw new IllegalArgumentException("아이디 또는 비밀번호가 일치하지 않습니다.");
         }
-        UserProfile profile = new UserProfile(user.id(), user.username(), user.membershipCode(), user.discordWebhookUrl());
+        UserProfile profile = new UserProfile(user.id(), user.username(), user.membershipCode(), user.discordWebhookUrl(), user.role());
         session.setAttribute("auth_user", profile);
         return Map.of("user", profile);
     }
@@ -104,7 +120,7 @@ public class WebApi {
     Object updateWebhook(@RequestBody WebhookRequest req, HttpSession session) {
         UserProfile user = requireUser(session);
         ReceiptStore.User updated = store.updateWebhook(user.id(), req.webhookUrl());
-        UserProfile newProfile = new UserProfile(updated.id(), updated.username(), updated.membershipCode(), updated.discordWebhookUrl());
+        UserProfile newProfile = new UserProfile(updated.id(), updated.username(), updated.membershipCode(), updated.discordWebhookUrl(), updated.role());
         session.setAttribute("auth_user", newProfile);
         return Map.of("ok", true, "user", newProfile);
     }
@@ -147,13 +163,39 @@ public class WebApi {
         return Map.of("submissions", store.mySubmissions(user.id()));
     }
 
-    @GetMapping("/forms") Object list(HttpServletRequest req, HttpServletResponse res) { owner(req, res); return Map.of("forms", store.forms(), "serverTime", store.now()); }
+    @GetMapping("/forms") Object list(HttpServletRequest req, HttpServletResponse res) {
+        owner(req, res);
+        return Map.of("forms", store.forms(), "serverTime", store.now(), "adminOnlyFormCreation", store.isAdminOnlyFormCreation());
+    }
 
     @PostMapping("/forms")
     Object create(@RequestBody NewForm f, HttpSession session) {
         UserProfile user = requireUser(session);
+        if (store.isAdminOnlyFormCreation() && !"ADMIN".equalsIgnoreCase(user.role())) {
+            throw new IllegalArgumentException("현재 관리자만 폼림픽을 개설할 수 있습니다.");
+        }
         boolean hasBubble = f.hasBubble() != null && f.hasBubble();
         return store.create(user.id(), f.title(), f.content(), f.startsAt(), f.expiresAt(), hasBubble);
+    }
+
+    @DeleteMapping("/forms/{id}")
+    Object deleteForm(@PathVariable String id, HttpSession session) {
+        requireAdmin(session);
+        store.deleteForm(id);
+        return Map.of("ok", true, "deletedFormId", id);
+    }
+
+    @PutMapping("/admin/settings/form-creation")
+    Object toggleFormCreation(@RequestBody AdminToggleRequest req, HttpSession session) {
+        requireAdmin(session);
+        store.setAdminOnlyFormCreation(req.adminOnly());
+        return Map.of("ok", true, "adminOnlyFormCreation", store.isAdminOnlyFormCreation());
+    }
+
+    @GetMapping("/admin/settings")
+    Object getAdminSettings(HttpSession session) {
+        requireAdmin(session);
+        return Map.of("adminOnlyFormCreation", store.isAdminOnlyFormCreation());
     }
 
     @GetMapping("/forms/{id}") Object detail(@PathVariable String id, HttpServletRequest req, HttpServletResponse res) {

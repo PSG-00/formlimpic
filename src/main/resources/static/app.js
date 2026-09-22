@@ -1,6 +1,6 @@
 const app = document.querySelector('#app');
 const userNav = document.querySelector('#user-nav');
-let timer, offset = 0, currentUser = null;
+let timer, offset = 0, currentUser = null, adminOnlyFormCreation = false;
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const date = s => new Date(s).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', hour12: false });
@@ -25,6 +25,7 @@ async function api(path, method = 'GET', body) {
   const data = await r.json();
   if (!r.ok) throw Error(data.message || '요청에 실패했습니다. 다시 시도해주세요.');
   if (data.serverTime) offset = Date.parse(data.serverTime) - Date.now();
+  if (data.adminOnlyFormCreation !== undefined) adminOnlyFormCreation = !!data.adminOnlyFormCreation;
   return data;
 }
 
@@ -44,14 +45,19 @@ async function checkAuth() {
   } catch {
     currentUser = null;
   }
+  try {
+    const formsRes = await api('/forms');
+    adminOnlyFormCreation = !!formsRes.adminOnlyFormCreation;
+  } catch {}
   renderNav();
 }
 
 function renderNav() {
   if (!userNav) return;
   if (currentUser) {
+    const isAdmin = currentUser.role === 'ADMIN';
     userNav.innerHTML = `
-      <span class="user-name">${esc(currentUser.username)}님</span>
+      <span class="user-name">${esc(currentUser.username)}님${isAdmin ? ' <span class="admin-badge">👑 관리자</span>' : ''}</span>
       <a href="#my" class="button secondary btn-sm">마이페이지</a>
       <button type="button" class="secondary btn-sm" id="logout-btn">로그아웃</button>
     `;
@@ -87,6 +93,11 @@ async function route() {
       if (!currentUser) {
         toast('폼림픽을 개설하려면 먼저 로그인해주세요.');
         location.hash = 'login';
+        return;
+      }
+      if (adminOnlyFormCreation && currentUser.role !== 'ADMIN') {
+        toast('현재 관리자만 새 폼림픽을 개설할 수 있습니다.');
+        location.hash = '';
         return;
       }
       return renderCreate();
@@ -196,12 +207,32 @@ async function renderMyPage(tab = 'submissions') {
     location.hash = 'login';
     return;
   }
+  const isAdmin = currentUser.role === 'ADMIN';
 
   app.innerHTML = `
     <div class="panel">
       <a class="back" href="#">← 홈으로</a>
       <h1>마이페이지</h1>
-      <p><strong class="user-name">${esc(currentUser.username)}</strong>님의 회원 정보 및 폼림픽 내역입니다.</p>
+      <p><strong class="user-name">${esc(currentUser.username)}</strong>님의 회원 정보 및 폼림픽 내역입니다.${isAdmin ? ' <span class="admin-badge">👑 관리자</span>' : ''}</p>
+
+      ${isAdmin ? `
+        <div class="admin-card">
+          <div class="eyebrow">ADMINISTRATION CONSOLE</div>
+          <h2 style="margin:6px 0 10px;font-size:18px;">👑 관리자 제어판</h2>
+          <p class="small" style="margin:0 0 14px;">관리자 전용 권한 설정 및 폼림픽 생성 정책을 제어합니다.</p>
+          <div class="admin-control-row">
+            <div>
+              <strong>폼림픽 개설 권한</strong>
+              <div class="small muted" id="admin-status-desc" style="margin-top:4px;">
+                ${adminOnlyFormCreation ? '🔒 현재 <strong>관리자만</strong> 새 폼림픽을 만들 수 있습니다.' : '🔓 현재 <strong>모든 회원</strong>이 자유롭게 폼림픽을 만들 수 있습니다.'}
+              </div>
+            </div>
+            <button type="button" id="btn-toggle-creation" class="${adminOnlyFormCreation ? 'btn-toggle-on' : 'btn-toggle-off'}">
+              ${adminOnlyFormCreation ? '🔒 관리자 전용 [ON]' : '🔓 전체 개설 허용 [OFF]'}
+            </button>
+          </div>
+        </div>
+      ` : ''}
 
       <div class="membership-badge-card">
         <div class="eyebrow">MY MEMBERSHIP CODE</div>
@@ -233,6 +264,25 @@ async function renderMyPage(tab = 'submissions') {
       <div id="tab-content">불러오는 중...</div>
     </div>
   `;
+
+  if (isAdmin) {
+    const toggleBtn = document.querySelector('#btn-toggle-creation');
+    if (toggleBtn) {
+      toggleBtn.onclick = async () => {
+        toggleBtn.disabled = true;
+        try {
+          const nextState = !adminOnlyFormCreation;
+          const res = await api('/admin/settings/form-creation', 'PUT', { adminOnly: nextState });
+          adminOnlyFormCreation = !!res.adminOnlyFormCreation;
+          toast(adminOnlyFormCreation ? '폼림픽 개설이 관리자 전용으로 설정되었습니다.' : '모든 회원이 폼림픽을 개설할 수 있도록 허용되었습니다.');
+          await renderMyPage(tab);
+        } catch (err) {
+          toast(err.message);
+          toggleBtn.disabled = false;
+        }
+      };
+    }
+  }
 
   document.querySelector('#webhook-form').onsubmit = async e => {
     e.preventDefault();
@@ -283,7 +333,10 @@ async function renderMyPage(tab = 'submissions') {
         <div class="sub-card">
           <div class="sub-card-header">
             <a class="sub-card-title" href="#form/${f.id}">${esc(f.title)}</a>
-            <span class="badge">${phase(f)}</span>
+            <div style="display:flex;gap:6px;align-items:center;">
+              <span class="badge">${phase(f)}</span>
+              ${f.adminCreated ? '<span class="admin-badge">👑 관리자</span>' : ''}
+            </div>
           </div>
           <p class="muted">
             접수 시각: ${date(r.receivedAt)}.${String(new Date(r.receivedAt).getMilliseconds()).padStart(3, '0')} (${r.early ? '조기 제출' : '정상'})
@@ -306,18 +359,22 @@ async function renderMyPage(tab = 'submissions') {
     }).join('');
   } else {
     const data = await api('/my/forms');
+    const canCreate = !adminOnlyFormCreation || (currentUser && currentUser.role === 'ADMIN');
     if (!data.forms || data.forms.length === 0) {
-      container.innerHTML = '<div class="empty">개설한 폼림픽이 없습니다. 새로운 폼림픽을 열어보세요! <br><br><a class="button" href="#new">＋ 폼림픽 만들기</a></div>';
+      container.innerHTML = `<div class="empty">개설한 폼림픽이 없습니다. 새로운 폼림픽을 열어보세요! <br><br>${canCreate ? '<a class="button" href="#new">＋ 폼림픽 만들기</a>' : '<span class="badge">🔒 현재 관리자만 개설 가능</span>'}</div>`;
       return;
     }
     container.innerHTML = `
       <div style="text-align:right;margin-bottom:16px;">
-        <a class="button" href="#new">＋ 새 폼림픽 만들기</a>
+        ${canCreate ? '<a class="button" href="#new">＋ 새 폼림픽 만들기</a>' : '<span class="badge" style="background:#fee2e2;color:#991b1b;padding:8px 12px;font-weight:600;">🔒 관리자 전용 개설 모드</span>'}
       </div>
       <div class="grid">
         ${data.forms.map(f => `
           <a class="card" href="#form/${f.id}">
-            <span class="badge">${phase(f)}</span>
+            <div class="badge-row">
+              <span class="badge">${phase(f)}</span>
+              ${f.adminCreated ? '<span class="admin-badge">👑 관리자</span>' : ''}
+            </div>
             <h2>${esc(f.title)}</h2>
             <p class="muted">신청 ${date(f.startsAt)}<br>마감 ${date(f.expiresAt)}</p>
             <span class="small">결과 및 답변 확인 ↗</span>
@@ -330,6 +387,7 @@ async function renderMyPage(tab = 'submissions') {
 
 async function renderHome() {
   const data = await api('/forms');
+  const canCreate = !adminOnlyFormCreation || (currentUser && currentUser.role === 'ADMIN');
   app.innerHTML = `
     <section class="hero">
       <div>
@@ -342,12 +400,15 @@ async function renderHome() {
     <div class="notice">연습용 서비스입니다. 이름과 연락처에는 반드시 가상 정보를 입력하세요.</div>
     <div class="section-head">
       <h2>열려 있는 폼림픽 <span class="muted">${data.forms.length}</span></h2>
-      <a class="button" href="#new">＋ 폼림픽 만들기</a>
+      ${canCreate ? '<a class="button" href="#new">＋ 폼림픽 만들기</a>' : '<span class="badge" style="background:#fee2e2;color:#991b1b;padding:8px 12px;font-weight:600;">🔒 관리자 전용 개설 모드</span>'}
     </div>
     <div class="grid">
       ${data.forms.slice().reverse().map(f => `
         <a class="card" href="#form/${f.id}">
-          <span class="badge">${phase(f)}</span>
+          <div class="badge-row">
+            <span class="badge">${phase(f)}</span>
+            ${f.adminCreated ? '<span class="admin-badge">👑 관리자</span>' : ''}
+          </div>
           <h2>${esc(f.title)}</h2>
           <p class="muted">신청 ${date(f.startsAt)}<br>마감 ${date(f.expiresAt)}</p>
           <span class="small">폼림픽 확인하기 ↗</span>
@@ -417,10 +478,18 @@ function renderCreate() {
 async function renderDetail(id) {
   const d = await api('/forms/' + id);
   const f = d.form;
+  const isAdmin = currentUser && currentUser.role === 'ADMIN';
+
   app.innerHTML = `
     <div class="panel">
-      <a class="back" href="#">← 전체 폼림픽</a>
-      <p><span class="badge" id="phase">${phase(f)}</span></p>
+      <div class="form-header-actions">
+        <a class="back" href="#">← 전체 폼림픽</a>
+        ${isAdmin ? `<button type="button" id="btn-delete-form" class="btn-danger btn-sm">🗑️ 폼림픽 삭제</button>` : ''}
+      </div>
+      <div class="badge-row">
+        <span class="badge" id="phase">${phase(f)}</span>
+        ${f.adminCreated ? '<span class="admin-badge">👑 관리자</span>' : ''}
+      </div>
       <h1>${esc(f.title)}</h1>
       <div class="content">${esc(f.content)}</div>
       <hr>
@@ -437,6 +506,25 @@ async function renderDetail(id) {
       <section id="results"></section>
     </div>
   `;
+
+  if (isAdmin) {
+    const delBtn = document.querySelector('#btn-delete-form');
+    if (delBtn) {
+      delBtn.onclick = async () => {
+        if (!confirm(`'${f.title}' 폼림픽을 삭제하시겠습니까?\n이 작업은 되돌릴 수 없으며 관련된 모든 접수 데이터가 영구히 삭제됩니다.`)) return;
+        delBtn.disabled = true;
+        try {
+          await api('/forms/' + id, 'DELETE');
+          toast('폼림픽이 성공적으로 삭제되었습니다.');
+          location.hash = '';
+        } catch (err) {
+          toast(err.message);
+          delBtn.disabled = false;
+        }
+      };
+    }
+  }
+
   const b = document.querySelector('#enter');
   b.onclick = () => {
     if (!currentUser && !d.mine) {
