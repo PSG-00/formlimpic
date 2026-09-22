@@ -1,6 +1,6 @@
 server:
   port: 8080
-  address: 127.0.0.1
+  address: ${SERVER_ADDRESS:0.0.0.0}
   tomcat:
     threads:
       max: 200
