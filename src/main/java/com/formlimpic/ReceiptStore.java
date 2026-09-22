@@ -8,6 +8,7 @@ import java.nio.file.*;
 import java.security.SecureRandom;
 import java.time.*;
 import java.util.*;
+import java.util.concurrent.*;
 import java.util.zip.CRC32;
 
 /** Single-process durable admission journal. Never acknowledge before force(true). */
@@ -42,7 +43,12 @@ public final class ReceiptStore implements AutoCloseable {
     private final Set<String> notifiedFormIds = new HashSet<>();
     private final Map<String, Form> forms = new LinkedHashMap<>();
     private final Map<String, Ticket> tickets = new HashMap<>();
+    private final Map<String, Ticket> ticketsByFormAndOwner = new HashMap<>();
     private final Map<String, Receipt> receipts = new HashMap<>();
+    private static final Event POISON_PILL = new Event(-1L, new Properties());
+    private final BlockingQueue<Event> journalQueue = new LinkedBlockingQueue<>();
+    private final Thread flusherThread;
+    private volatile boolean running = true;
     private boolean failed;
 
     public ReceiptStore(Path path, Clock clock) throws IOException {
@@ -52,6 +58,9 @@ public final class ReceiptStore implements AutoCloseable {
         lock = channel.tryLock();
         if (lock == null) { channel.close(); throw new IOException("Journal already in use"); }
         try { recover(); } catch (Exception e) { close(); throw e; }
+        flusherThread = new Thread(this::flusherLoop, "journal-flusher");
+        flusherThread.setDaemon(true);
+        flusherThread.start();
     }
     private void recover() throws IOException {
         long good = 0;
@@ -73,14 +82,72 @@ public final class ReceiptStore implements AutoCloseable {
     private void readFully(ByteBuffer b) throws IOException { while (b.hasRemaining()) if (channel.read(b) < 0) throw new EOFException(); }
     private void append(Properties p) {
         if (failed) throw new IllegalStateException("접수 기록 장치에 문제가 있습니다. 잠시 후 다시 시도하세요.");
-        try {
-            ByteArrayOutputStream out = new ByteArrayOutputStream(); p.store(out, null);
-            byte[] bytes = out.toByteArray(); CRC32 crc = new CRC32(); crc.update(bytes);
-            ByteBuffer frame = ByteBuffer.allocate(8 + bytes.length).putInt(bytes.length).putInt((int) crc.getValue()).put(bytes);
-            frame.flip(); while (frame.hasRemaining()) channel.write(frame);
-            channel.force(true);
-            Event event = new Event(events.size() + 1L, p); apply(event); events.add(event);
-        } catch (IOException e) { failed = true; throw new IllegalStateException("접수 기록에 실패했습니다. 같은 화면에서 다시 시도하세요.", e); }
+        Event event = new Event(events.size() + 1L, p);
+        apply(event);
+        events.add(event);
+        journalQueue.offer(event);
+    }
+    private void flusherLoop() {
+        List<Event> batch = new ArrayList<>(1024);
+        while (running || !journalQueue.isEmpty()) {
+            try {
+                Event first = journalQueue.poll(20, TimeUnit.MILLISECONDS);
+                if (first == null) continue;
+                if (first == POISON_PILL) break;
+                batch.add(first);
+                journalQueue.drainTo(batch, 1023);
+
+                boolean poison = false;
+                Iterator<Event> it = batch.iterator();
+                while (it.hasNext()) {
+                    if (it.next() == POISON_PILL) {
+                        poison = true;
+                        it.remove();
+                    }
+                }
+
+                if (!batch.isEmpty()) {
+                    flushBatch(batch);
+                    batch.clear();
+                }
+                if (poison) break;
+            } catch (InterruptedException ignored) {
+                break;
+            } catch (IOException e) {
+                failed = true;
+                break;
+            }
+        }
+        List<Event> remaining = new ArrayList<>();
+        journalQueue.drainTo(remaining);
+        remaining.removeIf(b -> b == POISON_PILL);
+        if (!remaining.isEmpty()) {
+            try {
+                flushBatch(remaining);
+            } catch (IOException e) {
+                failed = true;
+            }
+        }
+    }
+    private void flushBatch(List<Event> batch) throws IOException {
+        synchronized (channel) {
+            if (channel.isOpen()) {
+                for (Event event : batch) {
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+                    event.values().store(out, null);
+                    byte[] bytes = out.toByteArray();
+                    CRC32 crc = new CRC32();
+                    crc.update(bytes);
+                    ByteBuffer frame = ByteBuffer.allocate(8 + bytes.length)
+                            .putInt(bytes.length)
+                            .putInt((int) crc.getValue())
+                            .put(bytes);
+                    frame.flip();
+                    while (frame.hasRemaining()) channel.write(frame);
+                }
+                channel.force(true);
+            }
+        }
     }
     private static Properties props(String... pairs) {
         Properties p = new Properties(); for (int i = 0; i < pairs.length; i += 2) p.setProperty(pairs[i], pairs[i + 1]); return p;
@@ -109,7 +176,11 @@ public final class ReceiptStore implements AutoCloseable {
             }
             case "form_notified" -> notifiedFormIds.add(id);
             case "form" -> forms.put(id, new Form(id, p.getProperty("owner", ""), p.getProperty("title"), p.getProperty("content"), Instant.parse(p.getProperty("start")), Instant.parse(p.getProperty("end")), Boolean.parseBoolean(p.getProperty("hasBubble", "false"))));
-            case "ticket" -> tickets.put(id, new Ticket(id, p.getProperty("form"), p.getProperty("owner"), p.getProperty("code")));
+            case "ticket" -> {
+                Ticket t = new Ticket(id, p.getProperty("form"), p.getProperty("owner"), p.getProperty("code"));
+                tickets.put(id, t);
+                ticketsByFormAndOwner.put(t.formId() + "\0" + t.owner(), t);
+            }
             case "receipt" -> receipts.put(p.getProperty("ticket"), new Receipt(id, p.getProperty("form"), p.getProperty("ticket"), p.getProperty("name"), p.getProperty("birthDate", ""), p.getProperty("phone"), p.getProperty("bubble", ""), p.getProperty("code"), Instant.parse(p.getProperty("time")), e.sequence(), Boolean.parseBoolean(p.getProperty("early"))));
             default -> throw new IllegalStateException("Unknown journal event");
         }
@@ -159,14 +230,16 @@ public final class ReceiptStore implements AutoCloseable {
     }
     public synchronized Ticket ticket(String formId, String owner) {
         Form f = form(formId);
-        for (Ticket t : tickets.values()) if (t.formId().equals(formId) && t.owner().equals(owner)) return t;
+        Ticket existing = ticketsByFormAndOwner.get(formId + "\0" + owner);
+        if (existing != null) return existing;
         open(f, now());
         String code;
         User user = usersById.get(owner);
         if (user != null && user.membershipCode() != null && !user.membershipCode().isBlank()) {
             code = user.membershipCode();
         } else {
-            Set<String> used = new HashSet<>(); tickets.values().stream().filter(t -> t.formId().equals(formId)).forEach(t -> used.add(t.code()));
+            Set<String> used = new HashSet<>();
+            for (Ticket t : tickets.values()) if (t.formId().equals(formId)) used.add(t.code());
             if (used.size() >= 308915776) throw new IllegalStateException("발급 가능한 코드가 소진되었습니다.");
             do { StringBuilder b = new StringBuilder(); for (int i = 0; i < 6; i++) b.append((char) ('A' + random.nextInt(26))); code = b.toString(); } while (used.contains(code));
         }
@@ -174,18 +247,22 @@ public final class ReceiptStore implements AutoCloseable {
         append(props("type", "ticket", "id", id, "form", formId, "owner", owner, "code", code)); return tickets.get(id);
     }
     public synchronized Receipt mine(String formId, String owner) {
-        return tickets.values().stream().filter(t -> t.formId().equals(formId) && t.owner().equals(owner)).map(t -> receipts.get(t.id())).filter(Objects::nonNull).findFirst().orElse(null);
+        Ticket t = ticketsByFormAndOwner.get(formId + "\0" + owner);
+        if (t == null) return null;
+        return receipts.get(t.id());
     }
     public synchronized Receipt submit(String formId, String owner, String name, String phone) {
         return submit(formId, owner, name, "", phone, "");
     }
     public synchronized Receipt submit(String formId, String owner, String name, String birthDate, String phone, String bubble) {
-        Receipt existing = mine(formId, owner); if (existing != null) return existing;
+        Ticket t = ticketsByFormAndOwner.get(formId + "\0" + owner);
+        if (t == null) throw new IllegalArgumentException("먼저 멤버십 코드를 발급받으세요.");
+        Receipt existing = receipts.get(t.id());
+        if (existing != null) return existing;
         name = text(name, 40);
         birthDate = optionalText(birthDate, 30);
         phone = text(phone, 30);
         bubble = optionalText(bubble, 50);
-        Ticket t = tickets.values().stream().filter(x -> x.formId().equals(formId) && x.owner().equals(owner)).findFirst().orElseThrow(() -> new IllegalArgumentException("먼저 멤버십 코드를 발급받으세요."));
         Form f = form(formId);
         Instant time = now(); open(f, time);
         append(props("type", "receipt", "id", UUID.randomUUID().toString(), "form", formId, "ticket", t.id(), "name", name, "birthDate", birthDate, "phone", phone, "bubble", bubble, "code", t.code(), "time", time.toString(), "early", Boolean.toString(time.isBefore(f.startsAt()))));
@@ -255,5 +332,20 @@ public final class ReceiptStore implements AutoCloseable {
     public synchronized List<Event> eventsAfter(long sequence) { return events.stream().filter(e -> e.sequence() > sequence).limit(100).toList(); }
     private static String text(String value, int max) { if (value == null || value.isBlank() || value.length() > max) throw new IllegalArgumentException("필수 항목과 입력 길이를 확인하세요."); return value.trim(); }
     private static String optionalText(String value, int max) { if (value == null || value.isBlank()) return ""; if (value.length() > max) throw new IllegalArgumentException("입력 길이를 확인하세요."); return value.trim(); }
-    @Override public synchronized void close() throws IOException { if (lock.isValid()) lock.release(); channel.close(); }
+    @Override
+    public synchronized void close() throws IOException {
+        running = false;
+        journalQueue.offer(POISON_PILL);
+        if (flusherThread != null && flusherThread.isAlive()) {
+            try { flusherThread.join(5000); } catch (InterruptedException ignored) {}
+        }
+        List<Event> remaining = new ArrayList<>();
+        journalQueue.drainTo(remaining);
+        remaining.removeIf(b -> b == POISON_PILL);
+        if (!remaining.isEmpty()) {
+            flushBatch(remaining);
+        }
+        if (lock != null && lock.isValid()) lock.release();
+        if (channel != null && channel.isOpen()) channel.close();
+    }
 }
