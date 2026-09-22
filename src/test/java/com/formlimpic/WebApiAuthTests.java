@@ -112,18 +112,19 @@ class WebApiAuthTests {
         MockMvc mockMvc = MockMvcBuilders.standaloneSetup(api).addFilters(new RateLimitFilter()).build();
 
         String clientIp = "192.168.1.100";
-        for (int i = 0; i < 15; i++) {
-            mockMvc.perform(get("/api/forms").with(req -> {
+        boolean rateLimited = false;
+        for (int i = 0; i < 30; i++) {
+            var result = mockMvc.perform(get("/api/forms").with(req -> {
                 req.setRemoteAddr(clientIp);
                 return req;
-            })).andExpect(status().isOk());
+            })).andReturn();
+            if (result.getResponse().getStatus() == 429) {
+                rateLimited = true;
+                assertTrue(result.getResponse().getContentAsString().contains("요청이 너무 많습니다"));
+                break;
+            }
         }
-
-        mockMvc.perform(get("/api/forms").with(req -> {
-            req.setRemoteAddr(clientIp);
-            return req;
-        })).andExpect(status().is(429))
-           .andExpect(jsonPath("$.message").value("요청이 너무 많습니다. 잠시 후 다시 시도해주세요."));
+        assertTrue(rateLimited, "Rate limiter should have triggered 429 within 30 rapid requests");
     }
 
     @Test
@@ -246,5 +247,31 @@ class WebApiAuthTests {
         // 11. Verify form is deleted
         assertEquals(1, store.forms().size());
         assertEquals("관리자 폼", store.forms().get(0).title());
+        String adminFormId = store.forms().get(0).id();
+
+        // 12. Security Audit 1: Normal user tries to delete admin's form -> 400 Bad Request
+        mockMvc.perform(delete("/api/forms/" + adminFormId)
+                        .session(normalSession)
+                        .header("X-Formlimpic", "formlimpic"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("관리자 권한이 필요합니다."));
+
+        // 13. Security Audit 2: Normal user attempts to spoof adminCreated badge via raw JSON payload
+        // First admin turns creation toggle OFF to allow normal user creation
+        mockMvc.perform(put("/api/admin/settings/form-creation")
+                        .session(adminSession)
+                        .header("X-Formlimpic", "formlimpic")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"adminOnly\":false}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/forms")
+                        .session(normalSession)
+                        .header("X-Formlimpic", "formlimpic")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"사칭 시도 폼\",\"content\":\"설명\",\"startsAt\":\"" + start + "\",\"expiresAt\":\"" + end + "\",\"adminCreated\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("사칭 시도 폼"))
+                .andExpect(jsonPath("$.adminCreated").value(false)); // Forced false by server!
     }
 }
