@@ -35,8 +35,12 @@ public class WebApi {
         this.discordService = discordService;
     }
 
-    record NewForm(String title, String content, Instant startsAt, Instant expiresAt) {}
-    record Answer(String name, String phone) {}
+    record NewForm(String title, String content, Instant startsAt, Instant expiresAt, Boolean hasBubble) {}
+    record Answer(String name, String birthDate, String phone, String bubble) {
+        public Answer(String name, String phone) {
+            this(name, "", phone, "");
+        }
+    }
     record Row(int rank, String name, String membershipCode, Instant receivedAt, boolean early) {}
     record AuthRequest(String username, String password) {}
     record WebhookRequest(String webhookUrl) {}
@@ -148,7 +152,8 @@ public class WebApi {
     @PostMapping("/forms")
     Object create(@RequestBody NewForm f, HttpSession session) {
         UserProfile user = requireUser(session);
-        return store.create(user.id(), f.title(), f.content(), f.startsAt(), f.expiresAt());
+        boolean hasBubble = f.hasBubble() != null && f.hasBubble();
+        return store.create(user.id(), f.title(), f.content(), f.startsAt(), f.expiresAt(), hasBubble);
     }
 
     @GetMapping("/forms/{id}") Object detail(@PathVariable String id, HttpServletRequest req, HttpServletResponse res) {
@@ -165,7 +170,7 @@ public class WebApi {
     @PostMapping("/forms/{id}/submissions")
     Object submit(@PathVariable String id, @RequestBody Answer a, HttpSession session) {
         UserProfile user = requireUser(session);
-        return store.submit(id, user.id(), a.name(), a.phone());
+        return store.submit(id, user.id(), a.name(), a.birthDate(), a.phone(), a.bubble());
     }
 
     @GetMapping("/forms/{id}/results") Object results(@PathVariable String id) {

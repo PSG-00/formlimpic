@@ -13,14 +13,22 @@ import java.util.zip.CRC32;
 /** Single-process durable admission journal. Never acknowledge before force(true). */
 public final class ReceiptStore implements AutoCloseable {
     public record User(String id, String username, String passwordHash, String membershipCode, String discordWebhookUrl, Instant createdAt) {}
-    public record Form(String id, String owner, String title, String content, Instant startsAt, Instant expiresAt) {
+    public record Form(String id, String owner, String title, String content, Instant startsAt, Instant expiresAt, boolean hasBubble) {
+        public Form(String id, String owner, String title, String content, Instant startsAt, Instant expiresAt) {
+            this(id, owner, title, content, startsAt, expiresAt, false);
+        }
         public Form(String id, String title, String content, Instant startsAt, Instant expiresAt) {
-            this(id, "", title, content, startsAt, expiresAt);
+            this(id, "", title, content, startsAt, expiresAt, false);
         }
     }
     public record Ticket(String id, String formId, String owner, String code) {}
-    public record Receipt(String id, String formId, String ticketId, String name, String phone,
-                          String code, Instant receivedAt, long sequence, boolean early) {}
+    public record Receipt(String id, String formId, String ticketId, String name, String birthDate, String phone, String bubble,
+                          String code, Instant receivedAt, long sequence, boolean early) {
+        public Receipt(String id, String formId, String ticketId, String name, String phone,
+                       String code, Instant receivedAt, long sequence, boolean early) {
+            this(id, formId, ticketId, name, "", phone, "", code, receivedAt, sequence, early);
+        }
+    }
     public record SubmissionSummary(Form form, Ticket ticket, Receipt receipt, int rank) {}
     public record Event(long sequence, Properties values) {}
     private final FileChannel channel;
@@ -100,9 +108,9 @@ public final class ReceiptStore implements AutoCloseable {
                 }
             }
             case "form_notified" -> notifiedFormIds.add(id);
-            case "form" -> forms.put(id, new Form(id, p.getProperty("owner", ""), p.getProperty("title"), p.getProperty("content"), Instant.parse(p.getProperty("start")), Instant.parse(p.getProperty("end"))));
+            case "form" -> forms.put(id, new Form(id, p.getProperty("owner", ""), p.getProperty("title"), p.getProperty("content"), Instant.parse(p.getProperty("start")), Instant.parse(p.getProperty("end")), Boolean.parseBoolean(p.getProperty("hasBubble", "false"))));
             case "ticket" -> tickets.put(id, new Ticket(id, p.getProperty("form"), p.getProperty("owner"), p.getProperty("code")));
-            case "receipt" -> receipts.put(p.getProperty("ticket"), new Receipt(id, p.getProperty("form"), p.getProperty("ticket"), p.getProperty("name"), p.getProperty("phone"), p.getProperty("code"), Instant.parse(p.getProperty("time")), e.sequence(), Boolean.parseBoolean(p.getProperty("early"))));
+            case "receipt" -> receipts.put(p.getProperty("ticket"), new Receipt(id, p.getProperty("form"), p.getProperty("ticket"), p.getProperty("name"), p.getProperty("birthDate", ""), p.getProperty("phone"), p.getProperty("bubble", ""), p.getProperty("code"), Instant.parse(p.getProperty("time")), e.sequence(), Boolean.parseBoolean(p.getProperty("early"))));
             default -> throw new IllegalStateException("Unknown journal event");
         }
     }
@@ -133,13 +141,16 @@ public final class ReceiptStore implements AutoCloseable {
     public synchronized Form form(String id) { Form f = forms.get(id); if (f == null) throw new IllegalArgumentException("폼림픽을 찾을 수 없습니다."); return f; }
     public Instant now() { return clock.instant(); }
     public synchronized Form create(String title, String content, Instant start, Instant end) {
-        return create("", title, content, start, end);
+        return create("", title, content, start, end, false);
     }
     public synchronized Form create(String owner, String title, String content, Instant start, Instant end) {
+        return create(owner, title, content, start, end, false);
+    }
+    public synchronized Form create(String owner, String title, String content, Instant start, Instant end, boolean hasBubble) {
         title = text(title, 120); content = text(content, 10000);
         if (start == null || end == null || !start.isAfter(now()) || !end.isAfter(start)) throw new IllegalArgumentException("시작은 현재 이후, 만료는 시작 이후여야 합니다.");
         String id = UUID.randomUUID().toString();
-        append(props("type", "form", "id", id, "owner", owner != null ? owner : "", "title", title, "content", content, "start", start.toString(), "end", end.toString()));
+        append(props("type", "form", "id", id, "owner", owner != null ? owner : "", "title", title, "content", content, "start", start.toString(), "end", end.toString(), "hasBubble", Boolean.toString(hasBubble)));
         return forms.get(id);
     }
     private void open(Form f, Instant time) {
@@ -166,12 +177,18 @@ public final class ReceiptStore implements AutoCloseable {
         return tickets.values().stream().filter(t -> t.formId().equals(formId) && t.owner().equals(owner)).map(t -> receipts.get(t.id())).filter(Objects::nonNull).findFirst().orElse(null);
     }
     public synchronized Receipt submit(String formId, String owner, String name, String phone) {
+        return submit(formId, owner, name, "", phone, "");
+    }
+    public synchronized Receipt submit(String formId, String owner, String name, String birthDate, String phone, String bubble) {
         Receipt existing = mine(formId, owner); if (existing != null) return existing;
-        name = text(name, 40); phone = text(phone, 30);
+        name = text(name, 40);
+        birthDate = optionalText(birthDate, 30);
+        phone = text(phone, 30);
+        bubble = optionalText(bubble, 50);
         Ticket t = tickets.values().stream().filter(x -> x.formId().equals(formId) && x.owner().equals(owner)).findFirst().orElseThrow(() -> new IllegalArgumentException("먼저 멤버십 코드를 발급받으세요."));
         Form f = form(formId);
         Instant time = now(); open(f, time);
-        append(props("type", "receipt", "id", UUID.randomUUID().toString(), "form", formId, "ticket", t.id(), "name", name, "phone", phone, "code", t.code(), "time", time.toString(), "early", Boolean.toString(time.isBefore(f.startsAt()))));
+        append(props("type", "receipt", "id", UUID.randomUUID().toString(), "form", formId, "ticket", t.id(), "name", name, "birthDate", birthDate, "phone", phone, "bubble", bubble, "code", t.code(), "time", time.toString(), "early", Boolean.toString(time.isBefore(f.startsAt()))));
         return receipts.get(t.id());
     }
     public synchronized List<Receipt> results(String formId) {
@@ -237,5 +254,6 @@ public final class ReceiptStore implements AutoCloseable {
     }
     public synchronized List<Event> eventsAfter(long sequence) { return events.stream().filter(e -> e.sequence() > sequence).limit(100).toList(); }
     private static String text(String value, int max) { if (value == null || value.isBlank() || value.length() > max) throw new IllegalArgumentException("필수 항목과 입력 길이를 확인하세요."); return value.trim(); }
+    private static String optionalText(String value, int max) { if (value == null || value.isBlank()) return ""; if (value.length() > max) throw new IllegalArgumentException("입력 길이를 확인하세요."); return value.trim(); }
     @Override public synchronized void close() throws IOException { if (lock.isValid()) lock.release(); channel.close(); }
 }

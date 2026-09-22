@@ -140,4 +140,39 @@ class ReceiptStoreTests {
             assertTrue(restored.unnotifiedExpiredForms().isEmpty());
         }
     }
+    @Test void bubbleOptionAndBirthDateBubbleSubmissionRecovery() throws Exception {
+        TestClock clock = new TestClock(); Path path = dir.resolve("bubble_journal");
+        String formWithBubbleId; String formWithoutBubbleId; String userId;
+        try (ReceiptStore s = new ReceiptStore(path, clock)) {
+            var user = s.registerUser("carol", "hash");
+            userId = user.id();
+            var f1 = s.create(userId, "Bubble Form", "content", clock.value.plusSeconds(5), clock.value.plusSeconds(20), true);
+            var f2 = s.create(userId, "Normal Form", "content", clock.value.plusSeconds(5), clock.value.plusSeconds(20), false);
+            formWithBubbleId = f1.id();
+            formWithoutBubbleId = f2.id();
+            assertTrue(f1.hasBubble());
+            assertFalse(f2.hasBubble());
+
+            clock.value = clock.value.plusSeconds(10);
+            s.ticket(formWithBubbleId, userId);
+            var receipt = s.submit(formWithBubbleId, userId, "Carol", "020505", "010-9999-8888", "CarolBubble");
+            assertEquals("Carol", receipt.name());
+            assertEquals("020505", receipt.birthDate());
+            assertEquals("010-9999-8888", receipt.phone());
+            assertEquals("CarolBubble", receipt.bubble());
+        }
+        try (ReceiptStore restored = new ReceiptStore(path, clock)) {
+            var restoredF1 = restored.form(formWithBubbleId);
+            var restoredF2 = restored.form(formWithoutBubbleId);
+            assertTrue(restoredF1.hasBubble());
+            assertFalse(restoredF2.hasBubble());
+
+            var restoredReceipt = restored.mine(formWithBubbleId, userId);
+            assertNotNull(restoredReceipt);
+            assertEquals("Carol", restoredReceipt.name());
+            assertEquals("020505", restoredReceipt.birthDate());
+            assertEquals("010-9999-8888", restoredReceipt.phone());
+            assertEquals("CarolBubble", restoredReceipt.bubble());
+        }
+    }
 }

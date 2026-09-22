@@ -291,6 +291,8 @@ async function renderMyPage(tab = 'submissions') {
           <dl class="summary" style="margin: 12px 0;">
             <dt>멤버십 코드</dt><dd><strong>${s.ticket.code}</strong></dd>
             <dt>신청 이름</dt><dd>${esc(r.name)}</dd>
+            ${r.birthDate ? `<dt>생년월일</dt><dd>${esc(r.birthDate)}</dd>` : ''}
+            ${r.bubble ? `<dt>버블</dt><dd>${esc(r.bubble)}</dd>` : ''}
             <dt>최종 결과</dt>
             <dd>
               ${isExpired
@@ -381,6 +383,11 @@ function renderCreate() {
             <input name="end" type="datetime-local" required>
           </label>
         </div>
+        <label class="checkbox-field">
+          <input name="hasBubble" type="checkbox">
+          <span>버블(Bubble) 항목 추가</span>
+        </label>
+        <p class="small muted" style="margin-top:-2px;margin-bottom:18px;">체크 시 폼 신청 시 마지막에 버블 인증 입력란이 추가됩니다.</p>
         <div class="notice">신청 시각 이전 제출은 정상 신청자 뒤에 배정됩니다. 마감 후 이름·멤버십 코드·순위·접수 시각이 공개됩니다.</div>
         <button>폼림픽 생성하기</button>
       </form>
@@ -396,7 +403,8 @@ function renderCreate() {
         title: f.get('title'),
         content: f.get('content'),
         startsAt: new Date(f.get('start')).toISOString(),
-        expiresAt: new Date(f.get('end')).toISOString()
+        expiresAt: new Date(f.get('end')).toISOString(),
+        hasBubble: f.get('hasBubble') === 'on'
       });
       location.hash = 'form/' + r.id;
     } catch (x) {
@@ -417,8 +425,6 @@ async function renderDetail(id) {
       <div class="content">${esc(f.content)}</div>
       <hr>
       <p>신청 시작 ${date(f.startsAt)}<br>신청 마감 ${date(f.expiresAt)}<br><span class="small">한국 시간(KST) 기준</span></p>
-      <div class="muted">서버 시각 추정 · 실제 판정은 서버 접수 시각 기준</div>
-      <div class="clock" id="clock"></div>
       <div class="notice">
         📌 <strong>폼림픽 참여 안내</strong><br>
         • 신청 시작 10분 전부터 폼을 미리 작성할 수 있습니다.<br>
@@ -443,8 +449,7 @@ async function renderDetail(id) {
   };
   let loaded = false;
   const tick = async () => {
-    if (!document.querySelector('#clock')) return;
-    document.querySelector('#clock').textContent = time(now());
+    if (!document.querySelector('#phase')) return;
     document.querySelector('#phase').textContent = phase(f);
     b.textContent = d.mine ? '나의 답변 확인하기' : (now() >= Date.parse(f.expiresAt) ? '신청 마감' : (!currentUser ? '로그인 후 폼 제출' : '폼 제출'));
     b.disabled = !d.mine && (now() < Date.parse(f.startsAt) - 600000 || now() >= Date.parse(f.expiresAt));
@@ -482,7 +487,7 @@ async function renderDetail(id) {
     }
   };
   tick();
-  timer = setInterval(tick, 100);
+  timer = setInterval(tick, 200);
 }
 
 function showMine(r) {
@@ -491,7 +496,9 @@ function showMine(r) {
     <dl class="summary">
       <dt>멤버십 코드</dt><dd>${r.code}</dd>
       <dt>이름</dt><dd>${esc(r.name)}</dd>
+      ${r.birthDate ? `<dt>생년월일</dt><dd>${esc(r.birthDate)}</dd>` : ''}
       <dt>연락처</dt><dd>${esc(r.phone)}</dd>
+      ${r.bubble ? `<dt>버블</dt><dd>${esc(r.bubble)}</dd>` : ''}
       <dt>접수 시각</dt><dd>${date(r.receivedAt)}.${String(new Date(r.receivedAt).getMilliseconds()).padStart(3, '0')}</dd>
       <dt>접수 구분</dt><dd>${r.early ? '조기 제출 · 정상 신청자 뒤 배정' : '정상 접수'}</dd>
     </dl>
@@ -506,21 +513,24 @@ async function renderWizard(id) {
     return;
   }
   const t = await api('/forms/' + id + '/ticket', 'POST');
+  const hasBubble = !!d.form.hasBubble;
+  const totalSteps = hasBubble ? 5 : 4;
   let step = 0;
   const key = 'draft:' + id + ':' + (currentUser ? currentUser.id : '');
-  let draft = { name: '', phone: '' };
+  let draft = { name: '', birthDate: '', phone: '', bubble: '' };
   try {
-    draft = JSON.parse(sessionStorage.getItem(key)) || draft;
+    draft = { ...draft, ...JSON.parse(sessionStorage.getItem(key)) };
   } catch {}
 
   const render = () => {
+    const isLastStep = step === totalSteps - 1;
     app.innerHTML = `
       <div class="wizard">
         <div class="actions">
           <a class="back" href="#form/${id}">← ${esc(d.form.title)}</a>
-          <span class="muted">${step + 1} / 4</span>
+          <span class="muted">${step + 1} / ${totalSteps}</span>
         </div>
-        <div class="progress"><div style="width:${(step + 1) * 25}%"></div></div>
+        <div class="progress"><div style="width:${((step + 1) / totalSteps) * 100}%"></div></div>
         <form id="answer">
           <div class="step">
             ${step === 0 ? `
@@ -531,30 +541,32 @@ async function renderWizard(id) {
             ` : step === 1 ? `
               <h2>연습용 이름 *</h2>
               <div class="notice">절대 실제 개인정보를 적지 마세요. 가상의 이름을 입력하세요.</div>
-              <input name="name" maxlength="40" required value="${esc(draft.name)}" placeholder="예: 연습하는토끼" autocomplete="off">
+              <input name="name" maxlength="40" required value="${esc(draft.name)}" placeholder="예: 연습하는토끼" autocomplete="off" autofocus>
             ` : step === 2 ? `
+              <h2>연습용 생년월일 *</h2>
+              <div class="notice">절대 실제 개인정보를 적지 마세요. 가상의 생년월일을 입력하세요.</div>
+              <input name="birthDate" maxlength="20" required value="${esc(draft.birthDate)}" placeholder="예: 000101 (YYMMDD 6자리)" autocomplete="off" autofocus>
+            ` : step === 3 ? `
               <h2>연습용 연락처 *</h2>
               <div class="notice">절대 실제 개인정보를 적지 마세요. 실제 전화번호 대신 가상 값을 입력하세요.</div>
-              <input name="phone" maxlength="30" required value="${esc(draft.phone)}" placeholder="예: TEST-0001" autocomplete="off">
+              <input name="phone" maxlength="30" required value="${esc(draft.phone)}" placeholder="예: 010-0000-0000" autocomplete="off" autofocus>
             ` : `
-              <h2>제출 준비가 되었어요.</h2>
-              <dl class="summary">
-                <dt>멤버십 코드</dt><dd>${t.code}</dd>
-                <dt>연습용 이름</dt><dd>${esc(draft.name)}</dd>
-                <dt>연습용 연락처</dt><dd>${esc(draft.phone)}</dd>
-              </dl>
-              <p>신청 시작 ${date(d.form.startsAt)}</p>
-              <div class="clock" id="liveclock"></div>
-              <div class="notice">시계는 참고용입니다. 신청 시각 이전에 제출(조기 제출)하면 정상 신청자 뒤에 배정되며, 제출 후 수정할 수 없습니다.</div>
+              <h2>연습용 버블(Bubble) *</h2>
+              <div class="notice">절대 실제 개인정보를 적지 마세요. 가상의 버블 구독 정보 또는 닉네임을 입력하세요.</div>
+              <input name="bubble" maxlength="50" required value="${esc(draft.bubble)}" placeholder="예: 토끼 (또는 구독일수)" autocomplete="off" autofocus>
             `}
           </div>
           <div class="actions">
             <button type="button" class="secondary" id="prev">${step ? '이전' : '닫기'}</button>
-            <button id="next">${step === 3 ? '제출' : '다음'}</button>
+            <button id="next">${isLastStep ? '제출' : '다음'}</button>
           </div>
         </form>
       </div>
     `;
+
+    // autofocus fallback
+    const inp = document.querySelector('#answer input:not([readonly])');
+    if (inp) inp.focus();
 
     document.querySelector('#prev').onclick = () => {
       save();
@@ -569,7 +581,7 @@ async function renderWizard(id) {
     document.querySelector('#answer').onsubmit = async e => {
       e.preventDefault();
       save();
-      if (step < 3) {
+      if (step < totalSteps - 1) {
         step++;
         render();
         return;
@@ -588,7 +600,7 @@ async function renderWizard(id) {
   };
 
   function save() {
-    for (const k of ['name', 'phone']) {
+    for (const k of ['name', 'birthDate', 'phone', 'bubble']) {
       const el = document.querySelector(`[name="${k}"]`);
       if (el) draft[k] = el.value;
     }
@@ -596,10 +608,6 @@ async function renderWizard(id) {
   }
 
   render();
-  timer = setInterval(() => {
-    const el = document.querySelector('#liveclock');
-    if (el) el.textContent = time(now());
-  }, 50);
 }
 
 window.addEventListener('hashchange', route);

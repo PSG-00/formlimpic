@@ -67,9 +67,10 @@ class WebApiAuthTests {
                         .session(session)
                         .header("X-Formlimpic", "formlimpic")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"title\":\"선착순 이벤트\",\"content\":\"상세 설명\",\"startsAt\":\"" + nowPlus1h + "\",\"expiresAt\":\"" + nowPlus2h + "\"}"))
+                        .content("{\"title\":\"선착순 이벤트\",\"content\":\"상세 설명\",\"startsAt\":\"" + nowPlus1h + "\",\"expiresAt\":\"" + nowPlus2h + "\",\"hasBubble\":true}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.title").value("선착순 이벤트"));
+                .andExpect(jsonPath("$.title").value("선착순 이벤트"))
+                .andExpect(jsonPath("$.hasBubble").value(true));
 
         // 6. My forms
         mockMvc.perform(get("/api/my/forms").session(session))
