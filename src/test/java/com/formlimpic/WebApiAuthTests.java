@@ -101,4 +101,27 @@ class WebApiAuthTests {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("아이디 또는 비밀번호가 일치하지 않습니다."));
     }
+
+    @Test
+    void rateLimiterBlocksExcessiveRequests() throws Exception {
+        ReceiptStore store = new ReceiptStore(dir.resolve("ratelimit_journal"), Clock.systemUTC());
+        BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
+        DiscordWebhookService discordService = new DiscordWebhookService(store);
+        WebApi api = new WebApi(store, encoder, discordService);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(api).addFilters(new RateLimitFilter()).build();
+
+        String clientIp = "192.168.1.100";
+        for (int i = 0; i < 15; i++) {
+            mockMvc.perform(get("/api/forms").with(req -> {
+                req.setRemoteAddr(clientIp);
+                return req;
+            })).andExpect(status().isOk());
+        }
+
+        mockMvc.perform(get("/api/forms").with(req -> {
+            req.setRemoteAddr(clientIp);
+            return req;
+        })).andExpect(status().is(429))
+           .andExpect(jsonPath("$.message").value("요청이 너무 많습니다. 잠시 후 다시 시도해주세요."));
+    }
 }

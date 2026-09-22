@@ -41,3 +41,6 @@ out/
 .env.*
 !.env.example
 /data/
+cloudflared.exe
+*.sql
+loadtest.js

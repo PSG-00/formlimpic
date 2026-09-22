@@ -1,3 +1,14 @@
+server:
+  port: 8080
+  address: 127.0.0.1
+  tomcat:
+    threads:
+      max: 300
+      min-spare: 50
+    accept-count: 1500
+    max-connections: 10000
+    connection-timeout: 20000
+
 spring:
   application:
     name: formlimpic
@@ -7,8 +18,11 @@ spring:
     password: ${DB_PASSWORD:formlimpic-local}
     hikari:
       initialization-fail-timeout: -1
-      connection-timeout: 1000
-      maximum-pool-size: 5
+      connection-timeout: 3000
+      minimum-idle: 5
+      maximum-pool-size: 10
+      idle-timeout: 30000
+      max-lifetime: 120000
 
 formlimpic:
   journal: ${JOURNAL_PATH:./data/receipts.log}
