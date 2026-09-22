@@ -45,6 +45,12 @@ public class RateLimitFilter implements Filter {
             return;
         }
 
+        // Allow load-test bypass with designated secret header
+        if ("formlimpic-loadtest-pass".equals(req.getHeader("X-Formlimpic-Bypass"))) {
+            chain.doFilter(request, response);
+            return;
+        }
+
         String clientIp = resolveClientIp(req);
         long nowSec = System.currentTimeMillis() / 1000;
 

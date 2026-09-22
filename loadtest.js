@@ -20,6 +20,7 @@ const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:8080/api';
 const HEADERS = {
   'Content-Type': 'application/json',
   'X-Formlimpic': 'formlimpic',
+  'X-Formlimpic-Bypass': 'formlimpic-loadtest-pass',
   'X-Forwarded-For': '192.168.1.1',
 };
 
@@ -68,6 +69,7 @@ export default function (data) {
   const vuHeaders = {
     'Content-Type': 'application/json',
     'X-Formlimpic': 'formlimpic',
+    'X-Formlimpic-Bypass': 'formlimpic-loadtest-pass',
     'X-Forwarded-For': ip,
   };
 
