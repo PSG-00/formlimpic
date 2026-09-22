@@ -165,7 +165,7 @@ function renderSignup() {
     <div class="panel auth-box">
       <a class="back" href="#">← 홈으로</a>
       <h1>회원가입</h1>
-      <p>가상의 아이디와 비밀번호로 안전하게 가입하세요.<br>비밀번호는 암호화(BCrypt)되어 저장됩니다.</p>
+      <p>비밀번호는 BCrypt로 암호화되어 원본이 저장되지 않습니다.<br>그러나 실제 사용하는 아이디나 비밀번호를 사용하는 것은 비추천합니다.</p>
       <form id="signup-form">
         <label class="field">
           <span>아이디</span>
@@ -444,11 +444,6 @@ function renderCreate() {
             <input name="end" type="datetime-local" required>
           </label>
         </div>
-        <label class="checkbox-field">
-          <input name="hasBubble" type="checkbox">
-          <span>버블(Bubble) 항목 추가</span>
-        </label>
-        <p class="small muted" style="margin-top:-2px;margin-bottom:18px;">체크 시 폼 신청 시 마지막에 버블 인증 입력란이 추가됩니다.</p>
         <div class="notice">신청 시각 이전 제출은 정상 신청자 뒤에 배정됩니다. 마감 후 이름·멤버십 코드·순위·접수 시각이 공개됩니다.</div>
         <button>폼림픽 생성하기</button>
       </form>
@@ -464,8 +459,7 @@ function renderCreate() {
         title: f.get('title'),
         content: f.get('content'),
         startsAt: new Date(f.get('start')).toISOString(),
-        expiresAt: new Date(f.get('end')).toISOString(),
-        hasBubble: f.get('hasBubble') === 'on'
+        expiresAt: new Date(f.get('end')).toISOString()
       });
       location.hash = 'form/' + r.id;
     } catch (x) {
@@ -601,11 +595,10 @@ async function renderWizard(id) {
     return;
   }
   const t = await api('/forms/' + id + '/ticket', 'POST');
-  const hasBubble = !!d.form.hasBubble;
-  const totalSteps = hasBubble ? 5 : 4;
+  const totalSteps = 4;
   let step = 0;
   const key = 'draft:' + id + ':' + (currentUser ? currentUser.id : '');
-  let draft = { name: '', birthDate: '', phone: '', bubble: '' };
+  let draft = { name: '', birthDate: '', phone: '' };
   try {
     draft = { ...draft, ...JSON.parse(sessionStorage.getItem(key)) };
   } catch {}
@@ -627,21 +620,17 @@ async function renderWizard(id) {
               <input readonly value="${t.code}" aria-label="멤버십 코드">
               <p class="small">회원님의 고유 멤버십 코드가 중복 없이 자동으로 적용되었습니다.</p>
             ` : step === 1 ? `
-              <h2>연습용 이름 *</h2>
+              <h2>이름 *</h2>
               <div class="notice">절대 실제 개인정보를 적지 마세요. 가상의 이름을 입력하세요.</div>
-              <input name="name" maxlength="40" required value="${esc(draft.name)}" placeholder="예: 연습하는토끼" autocomplete="off" autofocus>
+              <input name="name" maxlength="40" required value="${esc(draft.name)}" placeholder="예: 토끼" autocomplete="off" autofocus>
             ` : step === 2 ? `
-              <h2>연습용 생년월일 *</h2>
+              <h2>생년월일 *</h2>
               <div class="notice">절대 실제 개인정보를 적지 마세요. 가상의 생년월일을 입력하세요.</div>
               <input name="birthDate" maxlength="20" required value="${esc(draft.birthDate)}" placeholder="예: 000101 (YYMMDD 6자리)" autocomplete="off" autofocus>
-            ` : step === 3 ? `
-              <h2>연습용 연락처 *</h2>
+            ` : `
+              <h2>연락처 *</h2>
               <div class="notice">절대 실제 개인정보를 적지 마세요. 실제 전화번호 대신 가상 값을 입력하세요.</div>
               <input name="phone" maxlength="30" required value="${esc(draft.phone)}" placeholder="예: 01012345678" autocomplete="off" autofocus>
-            ` : `
-              <h2>연습용 버블(Bubble) *</h2>
-              <div class="notice">절대 실제 개인정보를 적지 마세요. 가상의 버블 닉네임을 입력하세요.</div>
-              <input name="bubble" maxlength="50" required value="${esc(draft.bubble)}" placeholder="예: 원이" autocomplete="off" autofocus>
             `}
           </div>
           <div class="actions">
@@ -688,7 +677,7 @@ async function renderWizard(id) {
   };
 
   function save() {
-    for (const k of ['name', 'birthDate', 'phone', 'bubble']) {
+    for (const k of ['name', 'birthDate', 'phone']) {
       const el = document.querySelector(`[name="${k}"]`);
       if (el) draft[k] = el.value;
     }
