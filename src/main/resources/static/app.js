@@ -57,7 +57,7 @@ function renderNav() {
   if (currentUser) {
     const isAdmin = currentUser.role === 'ADMIN';
     userNav.innerHTML = `
-      <span class="user-name">${esc(currentUser.username)}님${isAdmin ? ' <span class="admin-badge">👑 관리자</span>' : ''}</span>
+      <span class="user-name">${esc(currentUser.username)}님${isAdmin ? ' <span class="admin-badge">👑 <span class="admin-badge-text">관리자</span></span>' : ''}</span>
       <a href="#my" class="button secondary btn-sm">마이페이지</a>
       <button type="button" class="secondary btn-sm" id="logout-btn">로그아웃</button>
     `;
