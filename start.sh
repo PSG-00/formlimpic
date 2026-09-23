@@ -37,7 +37,7 @@ nohup java -jar build/libs/formlimpic-0.0.1-SNAPSHOT.jar > app.log 2>&1 &
 
 # 7. Cloudflare Tunnel 백그라운드 기동
 echo "🌐 [5/5] Cloudflare 터널 백그라운드 기동..."
-nohup cloudflared tunnel --url http://localhost:8080 > tunnel.log 2>&1 &
+nohup cloudflared tunnel --url http://localhost:80 > tunnel.log 2>&1 &
 
 # 8. 관리자 비밀번호 생성 대기 (최대 15초)
 echo "⏳ [Formlimpic] 관리자 비밀번호 및 도메인 발급 대기 중..."
