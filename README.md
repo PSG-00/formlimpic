@@ -519,7 +519,7 @@ CREATE TABLE IF NOT EXISTS settings (
 | **폼 생성 시 관리자 뱃지 강제 날인 (사칭 공격)** | **차단 ❌** | 클라이언트 요청 바디(`NewForm`)에 `adminCreated` 필드가 존재하지 않으며, 백엔드 세션의 실제 사용자 역할(`role == 'ADMIN'`)만을 서버 내부에서 조회하여 강제 날인하므로 뱃지 사칭 불가. |
 | **`admin` 아이디 임의 가입 시도** | **차단 ❌** | `POST /api/auth/signup` 시 아이디가 `admin`인 경우 시스템 예약어로 간주하여 `HTTP 400` 반환. 관리자는 서버 기동 시 무작위 생성된 비밀번호로만 접근 가능. |
 | **10분 전 사전 Postman 제출 우회** | **차단 ❌** | 백엔드 `ReceiptStore.open()`에서 시작 10분 전 요청 시 `HTTP 400` 반환. 정각 전 제출은 `early=true` 플래그로 맨 꼴찌 순위 강제 배정. |
-| **과도한 연속 광클 / 봇 매크로 (DDoS)** | **차단 ❌** | `RateLimitFilter`에서 클라이언트 IP당 초당 15회 초과 요청 감지 시 즉시 `HTTP 429 Too Many Requests` 차단. |
+| **과도한 연속 광클 / 봇 매크로 (DDoS)** | **차단 ❌** | `RateLimitFilter`의 다층 방어: 클라이언트 IP당 **초당 15회 초과 시 1초간 429 차단**, 지속적인 악성 봇이 **분당 600회 초과 시 1시간 동안 IP 완전 차단(Hard Ban)**하여 서버 자원 및 대역폭 보호. |
 | **Swagger를 통한 API 취약점 스캔** | **안전 ❌** | Swagger/OpenAPI 라이브러리 미포함 (`404 Not Found`). |
 | **프론트엔드 개인정보 노출** | **안전 ❌** | 결과 API(`Row`)에서 타인의 전화번호, 생년월일, 버블 정보 원천 배제. 비밀번호는 BCrypt 해시로만 저장되며 응답 DTO에서 제외. |
 | **SQL Injection (SQL 주입 공격)** | **차단 ❌** | `DatabaseWriter`의 모든 쿼리가 `?` 플레이스홀더 파라미터 바인딩(PreparedStatement) 사용. |
