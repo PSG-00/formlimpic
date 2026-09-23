@@ -5,6 +5,10 @@ echo "==========================================================================
 echo "🚀 [Formlimpic] 폼림픽 서버 & 클라우드플레어 터널 원클릭 통합 기동기"
 echo "================================================================================"
 
+# 0. 깃허브 최신 코드 자동 동기화
+echo "🔄 [0/5] 깃허브 최신 코드 자동 동기화..."
+git pull origin main 2>/dev/null || true
+
 # 1. 기존 프로세스 완전 종료
 echo "🧹 [1/5] 기존 실행 중인 서버 및 터널 프로세스 정리..."
 pkill -9 -f 'formlimpic.*jar' 2>/dev/null || true
@@ -14,8 +18,8 @@ sleep 1
 # 2. 로그 파일 초기화
 rm -f app.log tunnel.log
 
-# 3. PostgreSQL Docker 확인 및 실행
-echo "🐘 [2/5] PostgreSQL 데이터베이스 확인 및 기동..."
+# 3. PostgreSQL Docker 및 Nginx 확인 및 실행
+echo "🐘 [2/5] PostgreSQL 및 Nginx 컨테이너 기동..."
 docker compose up -d
 
 # 4. cloudflared 설치 여부 확인 및 자동 설치
@@ -35,8 +39,8 @@ chmod +x ./gradlew
 echo "🌱 [4/5] 스프링 부트 서버 백그라운드 기동..."
 nohup java -jar build/libs/formlimpic-0.0.1-SNAPSHOT.jar > app.log 2>&1 &
 
-# 7. Cloudflare Tunnel 백그라운드 기동
-echo "🌐 [5/5] Cloudflare 터널 백그라운드 기동..."
+# 7. Cloudflare Tunnel 백그라운드 기동 (Nginx 80 포트로 전달)
+echo "🌐 [5/5] Cloudflare 터널 백그라운드 기동 (Nginx 80 포트 연결)..."
 nohup cloudflared tunnel --url http://localhost:80 > tunnel.log 2>&1 &
 
 # 8. 관리자 비밀번호 생성 대기 (최대 15초)
