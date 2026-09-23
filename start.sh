@@ -74,8 +74,9 @@ else
     echo "   👉 (발급 대기 중 - 잠시 후 'cat tunnel.log' 로 확인)"
 fi
 echo ""
-echo "💡 2. 직접 외부 IP 접속 주소 (HTTP):"
-echo "   👉 http://${PUBLIC_IP}:8080"
+echo "💡 2. 직접 외부 IP 접속 주소 (HTTP 80 - 포트 번호 없이 접속!):"
+echo "   👉 http://${PUBLIC_IP}"
+echo "   (내부 8080 포트 직접 접속: http://${PUBLIC_IP}:8080)"
 echo ""
 echo "👑 3. 관리자 로그인 정보:"
 echo "   👉 Username : admin"
