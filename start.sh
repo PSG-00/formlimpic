@@ -1,13 +1,24 @@
 #!/bin/bash
 set -e
 
+# safe.directory 자동 등록 (계정 무관 깃 오류 방지)
+git config --global --add safe.directory "$PWD" 2>/dev/null || true
+
+# 0. 깃허브 최신 코드 무조건 강제 동기화 (로컬 수정 충돌 원천 방지)
+if [ "$1" != "--no-sync" ]; then
+    echo "================================================================================"
+    echo "🚀 [Formlimpic] 폼림픽 서버 & 클라우드플레어 터널 원클릭 통합 기동기"
+    echo "================================================================================"
+    echo "🔄 [0/5] 깃허브 최신 코드 자동 동기화 (origin/main)..."
+    git fetch origin main || true
+    git reset --hard origin/main || true
+    chmod +x start.sh gradlew 2>/dev/null || true
+    exec ./start.sh --no-sync "$@"
+fi
+
 echo "================================================================================"
 echo "🚀 [Formlimpic] 폼림픽 서버 & 클라우드플레어 터널 원클릭 통합 기동기"
 echo "================================================================================"
-
-# 0. 깃허브 최신 코드 자동 동기화
-echo "🔄 [0/5] 깃허브 최신 코드 자동 동기화..."
-git pull origin main 2>/dev/null || true
 
 # 1. 기존 프로세스 완전 종료
 echo "🧹 [1/5] 기존 실행 중인 서버 및 터널 프로세스 정리..."
