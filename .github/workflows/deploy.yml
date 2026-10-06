@@ -35,11 +35,14 @@ jobs:
     steps:
       - name: Execute Remote Deploy on GCP
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          DISCORD_DEPLOY_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
         with:
           host: ${{ secrets.GCP_VM_HOST }}
           username: ${{ secrets.GCP_VM_USER }}
           key: ${{ secrets.GCP_SSH_PRIVATE_KEY }}
           port: 22
+          envs: DISCORD_DEPLOY_WEBHOOK
           script: |
             cd /home/${{ secrets.GCP_VM_USER }}/formlimpic
             ./start.sh

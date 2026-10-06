@@ -12,7 +12,7 @@ import java.security.SecureRandom;
 import java.util.Optional;
 
 /**
- * Automatically initializes or refreshes the admin account with a secure Google-style random password on startup.
+ * Automatically initializes the admin account on first run and preserves credentials on restarts.
  */
 @Component
 @Order(1)
@@ -41,27 +41,53 @@ public class AdminInitializer implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        String randomPassword = generateGoogleStylePassword();
-        String encoded = encoder.encode(randomPassword);
-
+        String customAdminPw = System.getenv("ADMIN_PASSWORD");
         Optional<ReceiptStore.User> existing = store.findUserByUsername("admin");
+
         if (existing.isEmpty()) {
+            String passwordToUse = (customAdminPw != null && !customAdminPw.isBlank())
+                    ? customAdminPw.trim()
+                    : generateGoogleStylePassword();
+            String encoded = encoder.encode(passwordToUse);
             store.registerUser("admin", encoded);
+
+            String banner = String.format("""
+
+                    ================================================================================
+                    [Formlimpic] 👑 ADMIN CREDENTIALS INITIALIZED
+                    --------------------------------------------------------------------------------
+                    Username : admin
+                    Password : %s
+                    (최초 생성된 관리자 비밀번호입니다.)
+                    ================================================================================
+                    """, passwordToUse);
+            System.out.println(banner);
+            log.info("[Formlimpic] Admin account initialized. Username: admin");
         } else {
-            store.updateUserPassword(existing.get().id(), encoded);
+            if (customAdminPw != null && !customAdminPw.isBlank()) {
+                String encoded = encoder.encode(customAdminPw.trim());
+                store.updateUserPassword(existing.get().id(), encoded);
+                System.out.printf("""
+
+                    ================================================================================
+                    [Formlimpic] 👑 ADMIN PASSWORD UPDATED (VIA ENV)
+                    --------------------------------------------------------------------------------
+                    Username : admin
+                    Password : %s
+                    ================================================================================
+                    %n""", customAdminPw.trim());
+            } else {
+                System.out.println("""
+
+                    ================================================================================
+                    [Formlimpic] 👑 ADMIN ACCOUNT PRESERVED
+                    --------------------------------------------------------------------------------
+                    Username : admin
+                    Password : (기존 설정 비밀번호 유지)
+                    ================================================================================
+                    """);
+            }
+            log.info("[Formlimpic] Admin account preserved.");
         }
-
-        String banner = String.format("""
-
-                ================================================================================
-                [Formlimpic] 👑 ADMIN CREDENTIALS INITIALIZED
-                --------------------------------------------------------------------------------
-                Username : admin
-                Password : %s
-                (서버 실행 시 자동 생성된 안전한 무작위 관리자 비밀번호입니다.)
-                ================================================================================
-                """, randomPassword);
-        System.out.println(banner);
-        log.info("[Formlimpic] Admin account initialized. Username: admin");
     }
 }

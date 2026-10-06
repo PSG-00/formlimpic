@@ -43,3 +43,5 @@ out/
 /data/
 cloudflared.exe
 *.sql
+*.log
+deploy_webhook.url

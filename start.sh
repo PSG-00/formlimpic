@@ -99,3 +99,56 @@ echo "   👉 Password : ${ADMIN_PW:-생성 완료 (app.log 확인)}"
 echo "--------------------------------------------------------------------------------"
 echo "📋 실시간 로그 모니터링: tail -f app.log"
 echo "================================================================================"
+
+# 11. 디스코드 배포 완료 웹훅 알림 (설정된 경우)
+DISCORD_WEBHOOK=""
+if [ -n "$DISCORD_DEPLOY_WEBHOOK" ]; then
+    DISCORD_WEBHOOK="$DISCORD_DEPLOY_WEBHOOK"
+elif [ -f "deploy_webhook.url" ]; then
+    DISCORD_WEBHOOK=$(cat deploy_webhook.url | tr -d '\r\n')
+fi
+
+if [ -n "$DISCORD_WEBHOOK" ]; then
+    echo "📢 [Formlimpic] 디스코드 채널로 배포 완료 알림 전송 중..."
+    NOW_KST=$(TZ="Asia/Seoul" date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date '+%Y-%m-%d %H:%M:%S')
+
+    PAYLOAD=$(cat <<EOF
+{
+  "embeds": [
+    {
+      "title": "🚀 [Formlimpic] 서버 자동 배포 완료!",
+      "description": "최신 코드가 빌드되어 정상 기동되었습니다.",
+      "color": 15553206,
+      "fields": [
+        {
+          "name": "🌐 클라우드플레어 공식 주소 (HTTPS 🔒)",
+          "value": "${TUNNEL_URL:-발급 대기 중 (잠시 후 갱신)}",
+          "inline": false
+        },
+        {
+          "name": "💡 직접 외부 IP 접속 주소 (80 포트)",
+          "value": "http://${PUBLIC_IP}",
+          "inline": false
+        },
+        {
+          "name": "👑 관리자 계정",
+          "value": "ID: \`admin\` | PW: \`${ADMIN_PW:-기존 비밀번호 유지}\`",
+          "inline": false
+        },
+        {
+          "name": "⏱️ 배포 시각",
+          "value": "${NOW_KST} (KST)",
+          "inline": true
+        }
+      ],
+      "footer": {
+        "text": "formlimpic · JUST FOR PRACTICE"
+      }
+    }
+  ]
+}
+EOF
+)
+    curl -s -H "Content-Type: application/json" -X POST -d "$PAYLOAD" "$DISCORD_WEBHOOK" > /dev/null || true
+    echo "✅ 디스코드 알림 전송 완료!"
+fi
