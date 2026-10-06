@@ -551,3 +551,13 @@ k6 run loadtest.js
 - **25초 정각**: 1,000명이 동시에 1밀리초 오차 없이 일제히 폼 제출.
 - 터미널 요약표에서 `p(95)`, `avg`, `med` 지연시간과 `checks_succeeded: 100%`를 확인하실 수 있습니다.
 
+---
+
+## 9. 클라우드 배포 및 CI/CD 자동화 (GCP & GitHub Actions)
+
+- **GitHub Actions CI/CD 파이프라인**:
+  - `main` 브랜치에 코드 push 시 Linux 환경(`ubuntu-latest`)에서 `./gradlew build` 및 전체 단위 테스트를 선행 검증 (CI).
+  - 빌드/테스트 100% 통과 시에만 GCP VM(`e2-highcpu-4`)으로 SSH 접속하여 `./start.sh` 원클릭 자동 배포 수행 (CD).
+- **실시간 디스코드 배포 알림**:
+  - 배포 완료 시 새로 발급된 Cloudflare Tunnel 공식 도메인과 갱신된 관리자 일회성 비밀번호를 등록된 디스코드 웹훅으로 자동 전송.
+
