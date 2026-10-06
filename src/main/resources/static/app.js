@@ -88,6 +88,7 @@ async function route() {
 
     if (kind === 'login') return renderLogin();
     if (kind === 'signup') return renderSignup();
+    if (kind === 'privacy') return renderPrivacy();
     if (kind === 'my') return await renderMyPage(id || 'submissions');
     if (kind === 'new') {
       if (!currentUser) {
@@ -175,6 +176,9 @@ function renderSignup() {
           <span>비밀번호</span>
           <input name="password" type="password" minlength="6" maxlength="50" required autocomplete="new-password" placeholder="6자 이상 입력">
         </label>
+        <div class="signup-terms-notice">
+          가입 시 폼림픽의 <a href="#privacy">개인정보처리방침</a>에 동의한 것으로 간주합니다.
+        </div>
         <button style="width:100%;margin-top:12px;">가입 및 로그인</button>
       </form>
       <p class="small" style="text-align:center;margin-top:20px;">
@@ -200,6 +204,149 @@ function renderSignup() {
       b.disabled = false;
     }
   };
+}
+
+function renderPrivacy() {
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  app.innerHTML = `
+    <div class="panel privacy-panel">
+      <a class="back" href="#">← 홈으로</a>
+      <h1>개인정보처리방침</h1>
+      <div class="privacy-date">시행일자: 2026년 9월 24일 · 최종 수정일: 2026년 10월 6일</div>
+
+      <div class="privacy-notice-box">
+        <strong>⚠️ [중요] 연습용 모의 데이터 입력 권장 안내</strong>
+        폼림픽(Formlimpic)은 팬덤의 선착순 폼 신청 속도를 훈련·측정하는 모의 연습 비공식 팬 서비스(JUST FOR PRACTICE)입니다.<br>
+        폼 제출 연습 시 실제 본인의 실명이나 실제 전화번호 대신 <strong>가상의 이름과 더미 번호(예: 홍길동, 010-0000-0000)</strong>를 입력하시는 것을 적극 권장합니다.
+      </div>
+
+      <div class="privacy-section">
+        <h3>1. 수집하는 개인정보 항목 및 수집 방법</h3>
+        <p>서비스 제공 및 선착순 폼 신청 모의 연습을 위해 아래의 최소한의 정보를 수집합니다.</p>
+        <ul>
+          <li><strong>회원가입 및 계정 관리 (필수)</strong>: 아이디, 비밀번호(BCrypt 단방향 암호화 저장), 자동 발급 고유 멤버십 코드</li>
+          <li><strong>알림 기능 (선택)</strong>: 디스코드 웹훅(Discord Webhook) URL (마이페이지에서 등록 시)</li>
+          <li><strong>폼 신청 모의 연습 시 (연습용 가상 데이터 권장)</strong>: 이름, 생년월일, 연락처(전화번호), 버블 닉네임</li>
+          <li><strong>서비스 이용 과정에서 자동 생성·수집</strong>: 세션 쿠키(JSESSIONID), 비회원 식별 쿠키(formlimpic_owner), 접속 IP 주소, 신청 제출 일시(밀리초 단위)</li>
+        </ul>
+      </div>
+
+      <div class="privacy-section">
+        <h3>2. 개인정보의 처리 목적</h3>
+        <p>수집한 정보는 다음 목적 이외의 용도로는 사용되지 않습니다.</p>
+        <ul>
+          <li><strong>회원 식별 및 로그인 유지</strong>: 계정 인증, 회원 전용 폼림픽 개설 및 마이페이지 신청 내역 관리</li>
+          <li><strong>선착순 폼림픽 연습 결과 집계</strong>: 0.001초(밀리초) 단위 접수 순위 판정 및 결과표(순위·이름·멤버십코드) 출력</li>
+          <li><strong>실시간 알림 발송</strong>: 회원이 등록한 디스코드 웹훅 채널로 선착순 접수 성공 및 순위 알림 전송</li>
+          <li><strong>서비스 보안 및 부정 이용 방지</strong>: 매크로 및 비정상 트래픽 감지(Rate Limiting), 디도스(DDoS) 방어</li>
+        </ul>
+      </div>
+
+      <div class="privacy-section">
+        <h3>3. 개인정보의 처리위탁 및 국외 이전</h3>
+        <p>안정적인 인프라 운영 및 글로벌 트래픽 방어를 위해 아래 외부 클라우드 인프라를 이용하고 있습니다.</p>
+        <div class="table-wrap">
+          <table class="privacy-table">
+            <thead>
+              <tr>
+                <th>수탁자</th>
+                <th>위탁 업무 및 목적</th>
+                <th>정보 항목</th>
+                <th>처리 및 보관 위치</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Google Cloud Platform (GCP)</strong></td>
+                <td>서버 호스팅 및 데이터베이스(PostgreSQL) 보관</td>
+                <td>계정 정보, 폼 신청 데이터</td>
+                <td>대한민국 (서울 리전 asia-northeast3)</td>
+              </tr>
+              <tr>
+                <td><strong>Cloudflare, Inc.</strong></td>
+                <td>HTTPS 보안 암호화 통신, DDoS 및 비정상 트래픽 방어 (Tunnel)</td>
+                <td>접속 IP, 패킷 전송 데이터 (영구 미저장)</td>
+                <td>글로벌 네트워크 (미국 등)</td>
+              </tr>
+              <tr>
+                <td><strong>Discord, Inc.</strong></td>
+                <td>회원이 등록한 웹훅으로 신청 성공 알림 발송</td>
+                <td>신청 성공 순위 및 접수 안내 메시지</td>
+                <td>미국 등 Discord 인프라</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="privacy-section">
+        <h3>4. 개인정보의 보관 및 파기</h3>
+        <p>원칙적으로 개인정보는 수집 목적이 달성되거나 탈퇴 시 지체 없이 파기합니다.</p>
+        <ul>
+          <li><strong>회원 정보</strong>: 회원 탈퇴 또는 서비스 종료 시 데이터베이스에서 즉시 영구 삭제됩니다.</li>
+          <li><strong>폼 신청 기록</strong>: 폼 개설자가 해당 폼을 삭제하거나 관리자가 데이터베이스를 초기화할 때 영구 삭제됩니다.</li>
+          <li><strong>비밀번호 보안</strong>: 비밀번호는 복호화가 불가능한 강력한 단방향 해시 알고리즘(BCrypt)으로 암호화되어 저장되므로, 운영자 및 관리자를 포함한 그 누구도 원본 비밀번호를 열람할 수 없습니다.</li>
+        </ul>
+      </div>
+
+      <div class="privacy-section">
+        <h3>5. 개인정보의 제3자 제공</h3>
+        <p>폼림픽은 이용자의 개인정보를 원칙적으로 외부에 제공하지 않습니다. 다만, 법령의 규정에 의거하거나 수사 목적으로 법령에 정해진 절차와 방법에 따라 수사기관의 적법한 요구가 있는 경우에 한하여 제공될 수 있습니다.</p>
+      </div>
+
+      <div class="privacy-section">
+        <h3>6. 이용자의 권리와 행사 방법</h3>
+        <ul>
+          <li>이용자는 언제든지 본인의 개인정보를 조회하거나 수정할 수 있습니다.</li>
+          <li>회원 탈퇴 및 저장된 데이터 삭제를 원하실 경우, 마이페이지 또는 아래 개인정보 문의처로 이메일을 보내주시면 지체 없이 처리해 드립니다.</li>
+        </ul>
+      </div>
+
+      <div class="privacy-section">
+        <h3>7. 개인정보의 안전성 확보 조치</h3>
+        <ul>
+          <li><strong>비밀번호 암호화</strong>: 회원 비밀번호는 단방향 암호화(BCrypt)되어 저장 및 관리됩니다.</li>
+          <li><strong>전송 구간 암호화</strong>: SSL/TLS 인증서를 적용하여 모든 네트워크 통신(HTTPS)을 안전하게 암호화합니다.</li>
+          <li><strong>비정상 트래픽 및 매크로 방어</strong>: 다계층 Rate Limit 필터를 운용하여 비정상 광클 및 봇 트래픽을 자동 감지하고 차단합니다.</li>
+          <li><strong>접근 통제</strong>: 데이터베이스는 Docker 내부망에 격리되어 있어 외부 인터넷으로부터의 직접 접근이 원천 차단되어 있습니다.</li>
+        </ul>
+      </div>
+
+      <div class="privacy-section">
+        <h3>8. 인터넷 접속정보 및 쿠키(Cookie) 운용</h3>
+        <ul>
+          <li><strong>세션 쿠키 (JSESSIONID)</strong>: 로그인 상태 유지 및 안전한 세션 관리를 위해 브라우저 메모리에 저장되며, 브라우저 종료 시 만료됩니다.</li>
+          <li><strong>비회원 식별 쿠키 (formlimpic_owner)</strong>: 비회원의 연습 편의 및 폼 식별을 위해 활용됩니다.</li>
+          <li>이용자는 웹 브라우저의 옵션 설정을 통해 쿠키 저장을 거부할 수 있으나, 이 경우 로그인이 필요한 일부 서비스 이용에 제한이 있을 수 있습니다.</li>
+        </ul>
+      </div>
+
+      <div class="privacy-section">
+        <h3>9. 개인정보 보호책임자 및 문의처</h3>
+        <p>서비스 이용 중 발생하는 모든 개인정보 관련 문의, 의견 제시, 데이터 삭제 요청 등은 아래의 창구로 연락 주시면 신속하게 답변해 드리겠습니다.</p>
+        <ul>
+          <li><strong>운영자 / 책임자</strong>: 폼림픽 운영팀</li>
+          <li><strong>문의 이메일</strong>: <a href="mailto:rescenedev0326@gmail.com" style="color:#ed52b6;font-weight:600;">rescenedev0326@gmail.com</a></li>
+        </ul>
+      </div>
+
+      <div class="privacy-section">
+        <h3>10. 권익침해 구제방법</h3>
+        <p>개인정보 침해에 대한 피해구제, 상담 등이 필요하신 경우 아래 기관에 문의하실 수 있습니다.</p>
+        <ul>
+          <li>개인정보침해신고센터: (국번없이) 118 (<a href="https://privacy.kisa.or.kr" target="_blank" rel="noopener">privacy.kisa.or.kr</a>)</li>
+          <li>개인정보분쟁조정위원회: 1833-6972 (<a href="https://www.kopico.go.kr" target="_blank" rel="noopener">www.kopico.go.kr</a>)</li>
+          <li>대검찰청 사이버수사과: (국번없이) 1301 (<a href="https://www.spo.go.kr" target="_blank" rel="noopener">www.spo.go.kr</a>)</li>
+          <li>경찰청 사이버수사국: (국번없이) 182 (<a href="https://ecrm.police.go.kr" target="_blank" rel="noopener">ecrm.police.go.kr</a>)</li>
+        </ul>
+      </div>
+
+      <div class="privacy-section">
+        <h3>11. 방침의 변경</h3>
+        <p>이 개인정보처리방침은 2026년 9월 24일부터 적용되며, 법령 및 방침에 따른 변경 내용이 추가, 삭제 및 수정될 경우 서비스 공지사항 또는 본 페이지를 통해 신속하게 고지하겠습니다.</p>
+      </div>
+    </div>
+  `;
 }
 
 async function renderMyPage(tab = 'submissions') {
