@@ -20,8 +20,10 @@ echo "==========================================================================
 echo "🚀 [Formlimpic] 폼림픽 서버 & 클라우드플레어 터널 원클릭 통합 기동기"
 echo "================================================================================"
 
-# 1. 기존 프로세스 완전 종료
+# 1. 기존 프로세스 완전 종료 (유령 프로세스/루트 프로세스 점유 방지)
 echo "🧹 [1/5] 기존 실행 중인 서버 및 터널 프로세스 정리..."
+sudo fuser -k 8080/tcp 2>/dev/null || true
+sudo pkill -9 -f 'formlimpic.*jar' 2>/dev/null || true
 pkill -9 -f 'formlimpic.*jar' 2>/dev/null || true
 pkill -9 -f 'cloudflared' 2>/dev/null || true
 sleep 1
@@ -93,7 +95,7 @@ echo "💡 2. 직접 외부 IP 접속 주소 (HTTP 80 - 포트 번호 없이 접
 echo "   👉 http://${PUBLIC_IP}"
 echo "   (내부 8080 포트 직접 접속: http://${PUBLIC_IP}:8080)"
 echo ""
-echo "👑 3. 관리자 로그인 정보:"
+echo "👑 3. 관리자 로그인 정보 (유출 방지용 일회성 신규 비밀번호):"
 echo "   👉 Username : admin"
 echo "   👉 Password : ${ADMIN_PW:-생성 완료 (app.log 확인)}"
 echo "--------------------------------------------------------------------------------"
@@ -131,8 +133,8 @@ if [ -n "$DISCORD_WEBHOOK" ]; then
           "inline": false
         },
         {
-          "name": "👑 관리자 계정",
-          "value": "ID: \`admin\` | PW: \`${ADMIN_PW:-기존 비밀번호 유지}\`",
+          "name": "👑 새로 발급된 관리자 비밀번호",
+          "value": "ID: \`admin\` | PW: \`${ADMIN_PW:-생성 완료}\`",
           "inline": false
         },
         {
