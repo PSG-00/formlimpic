@@ -22,6 +22,8 @@ echo "==========================================================================
 
 # 1. 기존 프로세스 완전 종료 (유령 프로세스/루트 프로세스 점유 방지)
 echo "🧹 [1/5] 기존 실행 중인 서버 및 터널 프로세스 정리..."
+sudo systemctl stop formlimpic 2>/dev/null || true
+sudo systemctl stop formlimpic-tunnel 2>/dev/null || true
 sudo fuser -k 8080/tcp 2>/dev/null || true
 sudo pkill -9 -f 'formlimpic.*jar' 2>/dev/null || true
 pkill -9 -f 'formlimpic.*jar' 2>/dev/null || true
@@ -29,7 +31,10 @@ pkill -9 -f 'cloudflared' 2>/dev/null || true
 sleep 1
 
 # 2. 로그 파일 초기화
-rm -f app.log tunnel.log
+sudo rm -f app.log tunnel.log 2>/dev/null || rm -f app.log tunnel.log
+touch app.log tunnel.log
+chmod 666 app.log tunnel.log 2>/dev/null || true
+sudo chown $(id -u):$(id -g) app.log tunnel.log 2>/dev/null || true
 
 # 3. PostgreSQL Docker 및 Nginx 확인 및 실행
 echo "🐘 [2/5] PostgreSQL 및 Nginx 컨테이너 기동..."
@@ -39,7 +44,7 @@ docker compose up -d
 if ! command -v cloudflared &> /dev/null; then
     echo "⬇️ cloudflared 패키지를 자동 설치합니다..."
     curl -sL --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-    dpkg -i cloudflared.deb 2>/dev/null || apt-get install -f -y
+    sudo dpkg -i cloudflared.deb 2>/dev/null || sudo apt-get install -f -y
     rm -f cloudflared.deb
 fi
 
@@ -48,18 +53,66 @@ echo "📦 [3/5] 최신 프로젝트 빌드 (테스트 제외)..."
 chmod +x ./gradlew
 ./gradlew build -x test
 
-# 6. 스프링 부트 서버 백그라운드 기동
-echo "🌱 [4/5] 스프링 부트 서버 백그라운드 기동..."
-nohup java -jar build/libs/formlimpic-0.0.1-SNAPSHOT.jar > app.log 2>&1 &
+# 6 & 7. 스프링 부트 서버 및 Cloudflare Tunnel 백그라운드 기동
+if command -v systemctl &> /dev/null && sudo -n true 2>/dev/null; then
+    echo "🌱 [4/5] 스프링 부트 및 터널을 systemd 서비스로 등록 및 백그라운드 기동 (러너 프로세스 트리 격리)..."
+    CURRENT_USER=$(id -un)
+    CURRENT_DIR="$PWD"
+    JAVA_BIN=$(command -v java || echo "/usr/bin/java")
+    CLOUDFLARED_BIN=$(command -v cloudflared || echo "/usr/local/bin/cloudflared")
 
-# 7. Cloudflare Tunnel 백그라운드 기동 (Nginx 80 포트로 전달)
-echo "🌐 [5/5] Cloudflare 터널 백그라운드 기동 (Nginx 80 포트 연결)..."
-nohup cloudflared tunnel --url http://localhost:80 > tunnel.log 2>&1 &
+    sudo tee /etc/systemd/system/formlimpic.service > /dev/null <<EOF
+[Unit]
+Description=Formlimpic Spring Boot Application
+After=network.target
 
-# 8. 관리자 비밀번호 생성 대기 (최대 15초)
+[Service]
+Type=simple
+User=${CURRENT_USER}
+WorkingDirectory=${CURRENT_DIR}
+Environment="PATH=${PATH}"
+ExecStart=/bin/bash -c 'exec "${JAVA_BIN}" -jar build/libs/formlimpic-0.0.1-SNAPSHOT.jar > app.log 2>&1'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sudo tee /etc/systemd/system/formlimpic-tunnel.service > /dev/null <<EOF
+[Unit]
+Description=Formlimpic Cloudflare Tunnel
+After=network.target formlimpic.service
+
+[Service]
+Type=simple
+User=${CURRENT_USER}
+WorkingDirectory=${CURRENT_DIR}
+Environment="PATH=${PATH}"
+ExecStart=/bin/bash -c 'exec "${CLOUDFLARED_BIN}" tunnel --url http://localhost:80 > tunnel.log 2>&1'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sudo systemctl daemon-reload
+    sudo systemctl reset-failed formlimpic formlimpic-tunnel 2>/dev/null || true
+    sudo systemctl restart formlimpic
+    sudo systemctl restart formlimpic-tunnel
+else
+    echo "🌱 [4/5] 스프링 부트 서버 백그라운드 기동..."
+    nohup java -jar build/libs/formlimpic-0.0.1-SNAPSHOT.jar > app.log 2>&1 &
+
+    echo "🌐 [5/5] Cloudflare 터널 백그라운드 기동 (Nginx 80 포트 연결)..."
+    nohup cloudflared tunnel --url http://localhost:80 > tunnel.log 2>&1 &
+fi
+
+# 8. 관리자 비밀번호 생성 대기 (최대 30초)
 echo "⏳ [Formlimpic] 관리자 비밀번호 및 도메인 발급 대기 중..."
 ADMIN_PW=""
-for i in {1..15}; do
+for i in {1..30}; do
     if grep -q "Password :" app.log 2>/dev/null; then
         ADMIN_PW=$(grep "Password :" app.log | sed -e 's/.*Password : *//' | tr -d '\r\n')
         break
@@ -67,9 +120,9 @@ for i in {1..15}; do
     sleep 1
 done
 
-# 9. 터널 URL 발급 대기 (최대 15초)
+# 9. 터널 URL 발급 대기 (최대 30초)
 TUNNEL_URL=""
-for i in {1..15}; do
+for i in {1..30}; do
     TUNNEL_URL=$(grep -o 'https://[a-zA-Z0-9.-]*\.trycloudflare\.com' tunnel.log 2>/dev/null | tail -n 1 || true)
     if [ -n "$TUNNEL_URL" ]; then
         break
@@ -100,6 +153,7 @@ echo "   👉 Username : admin"
 echo "   👉 Password : ${ADMIN_PW:-생성 완료 (app.log 확인)}"
 echo "--------------------------------------------------------------------------------"
 echo "📋 실시간 로그 모니터링: tail -f app.log"
+echo "🔧 서비스 상태 점검: sudo systemctl status formlimpic formlimpic-tunnel"
 echo "================================================================================"
 
 # 11. 디스코드 배포 완료 웹훅 알림 (설정된 경우)

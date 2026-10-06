@@ -42,4 +42,4 @@ jobs:
           git fetch origin main
           git reset --hard origin/main
           chmod +x start.sh gradlew
-          ./start.sh
+          ./start.sh --no-sync
