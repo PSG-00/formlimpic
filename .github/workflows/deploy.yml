@@ -45,4 +45,8 @@ jobs:
           envs: DISCORD_DEPLOY_WEBHOOK
           script: |
             cd /home/${{ secrets.GCP_VM_USER }}/formlimpic
+            git config --global --add safe.directory /home/${{ secrets.GCP_VM_USER }}/formlimpic || true
+            git fetch origin main
+            git reset --hard origin/main
+            chmod +x start.sh gradlew
             ./start.sh
