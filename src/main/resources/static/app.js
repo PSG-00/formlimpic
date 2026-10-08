@@ -8,6 +8,19 @@ const time = s => {
   const d = new Date(s);
   return d.toLocaleTimeString('en-GB', { timeZone: 'Asia/Seoul', hour12: false }) + '.' + String(d.getUTCMilliseconds()).padStart(3, '0');
 };
+const maskName = s => {
+  const str = String(s ?? '').trim();
+  const len = str.length;
+  if (len <= 1) return '*';
+  if (len === 2) return str[0] + '*';
+  if (len === 3) return str[0] + '*' + str[2];
+  if (len === 4) return str[0] + '**' + str[3];
+  if (len === 5) return str[0] + '***' + str[4];
+  const rem = len - 3;
+  const front = Math.ceil(rem / 2);
+  const back = Math.floor(rem / 2);
+  return str.slice(0, front) + '***' + str.slice(len - back);
+};
 
 function toast(s) {
   const t = document.querySelector('#toast');
@@ -705,7 +718,7 @@ async function renderDetail(id) {
                 ${rows.map(r => `
                   <tr>
                     <td>${r.rank}</td>
-                    <td>${esc(r.name)}</td>
+                    <td>${esc(maskName(r.name))}</td>
                     <td>${r.membershipCode}</td>
                     <td title="${esc(date(r.receivedAt))}">${time(r.receivedAt)}</td>
                     <td>${r.early ? '조기 제출' : '정상'}</td>
