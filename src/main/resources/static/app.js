@@ -10,6 +10,7 @@ const time = s => {
 };
 const maskName = s => {
   const str = String(s ?? '').trim();
+  if (str.includes('*')) return str;
   const len = str.length;
   if (len <= 1) return '*';
   if (len === 2) return str[0] + '*';

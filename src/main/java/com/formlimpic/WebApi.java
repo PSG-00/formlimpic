@@ -215,8 +215,28 @@ public class WebApi {
         return store.submit(id, user.id(), a.name(), a.birthDate(), a.phone(), a.bubble());
     }
 
+    static String maskName(String s) {
+        if (s == null) return "";
+        String str = s.trim();
+        if (str.contains("*")) return str;
+        int len = str.length();
+        if (len <= 1) return "*";
+        if (len == 2) return str.charAt(0) + "*";
+        if (len == 3) return str.charAt(0) + "*" + str.charAt(2);
+        if (len == 4) return str.charAt(0) + "**" + str.charAt(3);
+        if (len == 5) return str.charAt(0) + "***" + str.charAt(4);
+        int rem = len - 3;
+        int front = (rem + 1) / 2;
+        int back = rem / 2;
+        return str.substring(0, front) + "***" + str.substring(len - back);
+    }
+
     @GetMapping("/forms/{id}/results") Object results(@PathVariable String id) {
-        List<Row> rows = new ArrayList<>(); for (ReceiptStore.Receipt r : store.results(id)) rows.add(new Row(rows.size() + 1, r.name(), r.code(), r.receivedAt(), r.early())); return rows;
+        List<Row> rows = new ArrayList<>();
+        for (ReceiptStore.Receipt r : store.results(id)) {
+            rows.add(new Row(rows.size() + 1, maskName(r.name()), r.code(), r.receivedAt(), r.early()));
+        }
+        return rows;
     }
 
     @ExceptionHandler(IllegalArgumentException.class) ResponseEntity<?> bad(IllegalArgumentException e) { return ResponseEntity.badRequest().body(Map.of("message", e.getMessage())); }
