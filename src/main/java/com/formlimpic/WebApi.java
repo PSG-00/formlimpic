@@ -217,12 +217,33 @@ public class WebApi {
         if (form != null) {
             long diffFromStart = System.currentTimeMillis() - form.startsAt().toEpochMilli();
             int delay;
-            if (diffFromStart <= 50) {
-                // 초반 큐 선점 구간 (정각 직전 ~ 정각 +50ms 이내): 50 ~ 70ms 랜덤 지연
-                delay = 50 + ThreadLocalRandom.current().nextInt(21);
+            if (diffFromStart < -400) {
+                // 1단계: 59.60초 이전 (대기열 제로, 순수 통신 지연: 40 ~ 55ms)
+                delay = 40 + ThreadLocalRandom.current().nextInt(16);
+            } else if (diffFromStart < -200) {
+                // 2단계: 59.60초 ~ 59.80초 (대기열 극소: 45 ~ 65ms)
+                delay = 45 + ThreadLocalRandom.current().nextInt(21);
+            } else if (diffFromStart < -80) {
+                // 3단계: 59.80초 ~ 59.92초 (선입력 유입 시작: 60 ~ 90ms)
+                delay = 60 + ThreadLocalRandom.current().nextInt(31);
+            } else if (diffFromStart < 0) {
+                // 4단계: 59.92초 ~ 정각 직전 (선입력 격전, 적체 시작: 80 ~ 120ms)
+                delay = 80 + ThreadLocalRandom.current().nextInt(41);
+            } else if (diffFromStart < 100) {
+                // 5단계: 정각 00.00초 ~ 00.10초 (정각단 유입, 큐 폭발: 130 ~ 200ms)
+                delay = 130 + ThreadLocalRandom.current().nextInt(71);
+            } else if (diffFromStart < 1500) {
+                // 6단계: 00.10초 ~ 01.50초 (트래픽 정점, 큐 최고조 포화: 200 ~ 320ms)
+                delay = 200 + ThreadLocalRandom.current().nextInt(121);
+            } else if (diffFromStart < 3000) {
+                // 7단계: 01.50초 ~ 03.00초 (대기열 1차 소진 중: 130 ~ 200ms)
+                delay = 130 + ThreadLocalRandom.current().nextInt(71);
+            } else if (diffFromStart < 5000) {
+                // 8단계: 03.00초 ~ 05.00초 (대기열 막바지 해소 중: 80 ~ 130ms)
+                delay = 80 + ThreadLocalRandom.current().nextInt(51);
             } else {
-                // 후반 대기열 정체 구간 (정각 +50ms 이후): 100 ~ 200ms 랜덤 지연
-                delay = 100 + ThreadLocalRandom.current().nextInt(101);
+                // 9단계: 05.00초 이후 (완전 정상화 복귀: 50 ~ 70ms)
+                delay = 50 + ThreadLocalRandom.current().nextInt(21);
             }
             try {
                 Thread.sleep(delay);
