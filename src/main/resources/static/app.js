@@ -835,6 +835,8 @@ async function renderWizard(id) {
         return;
       }
       e.submitter.disabled = true;
+      const originalText = e.submitter.textContent;
+      e.submitter.textContent = '제출 중...';
       try {
         await api('/forms/' + id + '/submissions', 'POST', draft);
         sessionStorage.removeItem(key);
@@ -843,6 +845,7 @@ async function renderWizard(id) {
       } catch (x) {
         toast(x.message + ' 동일한 제출을 다시 시도해도 중복 접수되지 않습니다.');
         e.submitter.disabled = false;
+        e.submitter.textContent = originalText;
       }
     };
   };

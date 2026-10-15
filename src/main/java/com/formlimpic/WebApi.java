@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.time.*;
 import java.util.*;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Configuration
 class StoreConfiguration {
@@ -212,6 +213,23 @@ public class WebApi {
     @PostMapping("/forms/{id}/submissions")
     Object submit(@PathVariable String id, @RequestBody Answer a, HttpSession session) {
         UserProfile user = requireUser(session);
+        ReceiptStore.Form form = store.form(id);
+        if (form != null) {
+            long diffFromStart = System.currentTimeMillis() - form.startsAt().toEpochMilli();
+            int delay;
+            if (diffFromStart <= 50) {
+                // 초반 큐 선점 구간 (정각 직전 ~ 정각 +50ms 이내): 50 ~ 70ms 랜덤 지연
+                delay = 50 + ThreadLocalRandom.current().nextInt(21);
+            } else {
+                // 후반 대기열 정체 구간 (정각 +50ms 이후): 100 ~ 200ms 랜덤 지연
+                delay = 100 + ThreadLocalRandom.current().nextInt(101);
+            }
+            try {
+                Thread.sleep(delay);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
         return store.submit(id, user.id(), a.name(), a.birthDate(), a.phone(), a.bubble());
     }
 
