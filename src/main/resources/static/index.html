@@ -5,14 +5,67 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>폼림픽</title>
   <link rel="icon" type="image/png" href="/favicon.png">
-  <link rel="stylesheet" href="/style.css?v=20261023">
+  <link rel="stylesheet" href="/style.css?v=20261023-family">
 </head>
 <body>
   <header>
     <div class="header-left">
       <a href="#" class="brand">formlimpic<span>폼림픽</span></a>
       <span class="tag">JUST FOR PRACTICE</span>
-      <a href="https://quiz.rescene.online" class="btn-service-switch" target="_blank" rel="noopener noreferrer" title="모두의 퀴즈로 이동">🎮 모두의 퀴즈</a>
+      <div class="family-launcher-wrap">
+        <button id="btn-family-launcher" class="btn-launcher" type="button" onclick="toggleFamilyMenu(event)" title="리센느 패밀리 서비스" aria-label="리센느 패밀리 서비스" aria-expanded="false">
+          <svg class="launcher-icon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="4.5" cy="4.5" r="2.6"/>
+            <circle cx="12" cy="4.5" r="2.6"/>
+            <circle cx="19.5" cy="4.5" r="2.6"/>
+            <circle cx="4.5" cy="12" r="2.6"/>
+            <circle cx="12" cy="12" r="2.6"/>
+            <circle cx="19.5" cy="12" r="2.6"/>
+            <circle cx="4.5" cy="19.5" r="2.6"/>
+            <circle cx="12" cy="19.5" r="2.6"/>
+            <circle cx="19.5" cy="19.5" r="2.6"/>
+          </svg>
+          <span class="launcher-label">패밀리</span>
+        </button>
+        <div id="family-menu-popover" class="family-menu-popover hidden" role="menu">
+          <div class="family-menu-header">
+            <span class="family-menu-eyebrow">RESCENE LAB</span>
+            <span class="family-menu-sub">패밀리 서비스</span>
+          </div>
+          <div class="family-menu-list">
+            <a href="https://formlimpic.rescene.online" class="family-service-item current" target="_self">
+              <span class="service-icon-box formlimpic">🏃</span>
+              <div class="service-meta">
+                <div class="service-name-row">
+                  <strong>폼림픽</strong>
+                  <span class="badge-current">현재</span>
+                </div>
+                <p>아이돌 선착순 폼 신청 모의 연습</p>
+              </div>
+            </a>
+            <a href="https://quiz.rescene.online" class="family-service-item" target="_blank" rel="noopener noreferrer">
+              <span class="service-icon-box quiz">🎮</span>
+              <div class="service-meta">
+                <div class="service-name-row">
+                  <strong>모두의 퀴즈</strong>
+                  <span class="service-arrow">↗</span>
+                </div>
+                <p>2.5D 실시간 서바이벌 OX 퀴즈쇼</p>
+              </div>
+            </a>
+            <a href="https://archive.rescene.online" class="family-service-item" target="_blank" rel="noopener noreferrer">
+              <span class="service-icon-box archive">📦</span>
+              <div class="service-meta">
+                <div class="service-name-row">
+                  <strong>90일 아카이브</strong>
+                  <span class="service-arrow">↗</span>
+                </div>
+                <p>갤러리 무제한 검색 & 실시간 트렌드</p>
+              </div>
+            </a>
+          </div>
+        </div>
+      </div>
     </div>
     <nav id="user-nav"></nav>
   </header>
@@ -32,5 +85,40 @@
   </footer>
   <div id="toast" role="alert"></div>
   <script src="/app.js?v=20261015"></script>
+  <script>
+    function toggleFamilyMenu(event) {
+      if (event) event.stopPropagation();
+      const popover = document.getElementById('family-menu-popover');
+      const btn = document.getElementById('btn-family-launcher');
+      if (!popover) return;
+      const isOpen = !popover.classList.contains('hidden');
+      if (isOpen) {
+        popover.classList.add('hidden');
+        if (btn) btn.setAttribute('aria-expanded', 'false');
+      } else {
+        popover.classList.remove('hidden');
+        if (btn) btn.setAttribute('aria-expanded', 'true');
+      }
+    }
+    document.addEventListener('click', (e) => {
+      const popover = document.getElementById('family-menu-popover');
+      const btn = document.getElementById('btn-family-launcher');
+      if (!popover || popover.classList.contains('hidden')) return;
+      if (!popover.contains(e.target) && !btn?.contains(e.target)) {
+        popover.classList.add('hidden');
+        if (btn) btn.setAttribute('aria-expanded', 'false');
+      }
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        const popover = document.getElementById('family-menu-popover');
+        const btn = document.getElementById('btn-family-launcher');
+        if (popover && !popover.classList.contains('hidden')) {
+          popover.classList.add('hidden');
+          if (btn) btn.setAttribute('aria-expanded', 'false');
+        }
+      }
+    });
+  </script>
 </body>
 </html>

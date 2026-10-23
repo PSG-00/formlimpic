@@ -45,29 +45,233 @@ header {
   letter-spacing: 2px;
   color: #777;
 }
-.btn-service-switch {
+/* ==========================================================================
+   Rescene Universe Waffle Launcher & Popover Menu
+   ========================================================================== */
+.family-launcher-wrap {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 6px 12px;
-  font-size: 12px;
-  font-weight: 700;
-  color: #1e5a38;
-  background: #f0fdf4;
-  border: 1.5px solid #bbf7d0;
+}
+
+.btn-launcher {
+  height: 28px;
+  min-height: 28px;
+  max-height: 28px;
+  box-sizing: border-box;
+  padding: 0 11px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 25px;
   border-radius: 999px;
-  text-decoration: none;
+  border: 1.5px solid #ded3c1;
+  background: #f5eee3;
+  color: #55483f;
+  cursor: pointer;
   white-space: nowrap;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   transition: all 0.15s ease;
 }
-.btn-service-switch:hover {
-  background: #dcfce7;
-  border-color: #86efac;
-  color: #14532d;
+
+.btn-launcher:hover {
+  background: #e8dccb;
+  border-color: #cbbeaa;
+  color: #2e2621;
   transform: translateY(-1px);
 }
-.btn-service-switch:active {
+
+.btn-launcher:active {
   transform: scale(0.96);
+}
+
+.btn-launcher .launcher-icon {
+  display: inline-block;
+  vertical-align: middle;
+  color: currentColor;
+  opacity: 0.8;
+  transition: transform 0.18s ease;
+}
+
+.btn-launcher:hover .launcher-icon,
+.btn-launcher[aria-expanded="true"] .launcher-icon {
+  opacity: 1;
+  transform: rotate(90deg);
+}
+
+.btn-launcher[aria-expanded="true"] {
+  background: #e8dccb;
+  border-color: #bfae98;
+  color: #1a1614;
+}
+
+.family-menu-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 270px;
+  background: #ffffff;
+  border: 1px solid rgba(46, 38, 33, 0.12);
+  border-radius: 14px;
+  box-shadow: 0 12px 32px -4px rgba(35, 25, 15, 0.18), 0 4px 12px -2px rgba(35, 25, 15, 0.08);
+  padding: 8px 6px;
+  z-index: 1000;
+  box-sizing: border-box;
+  text-align: left;
+  animation: popoverDrop 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.family-menu-popover.hidden {
+  display: none !important;
+}
+
+@keyframes popoverDrop {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.family-menu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px 8px 10px;
+  border-bottom: 1px solid #f0eee9;
+  margin-bottom: 4px;
+}
+
+.family-menu-eyebrow {
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  color: #8c8071;
+  text-transform: uppercase;
+}
+
+.family-menu-sub {
+  font-size: 11px;
+  font-weight: 600;
+  color: #a89f92;
+}
+
+.family-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.family-service-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  text-decoration: none;
+  color: #2e2621;
+  background: transparent;
+  transition: background 0.12s ease, transform 0.1s ease;
+  box-sizing: border-box;
+}
+
+.family-service-item:hover {
+  background: #fbf8f3;
+  transform: translateX(2px);
+}
+
+.family-service-item.current {
+  background: #f5eee3;
+}
+
+.family-service-item.current:hover {
+  background: #eee4d4;
+  transform: none;
+}
+
+.service-icon-box {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.05);
+}
+
+.service-icon-box.quiz {
+  background: #fef3c7;
+}
+
+.service-icon-box.formlimpic {
+  background: #fce7f3;
+}
+
+.service-icon-box.archive {
+  background: #ede9fe;
+}
+
+.service-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.service-name-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.service-name-row strong {
+  font-size: 13px;
+  font-weight: 750;
+  color: #221f1d;
+  line-height: 1.25;
+}
+
+.service-meta p {
+  font-size: 11px;
+  color: #7c7267;
+  margin: 2px 0 0 0;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.badge-current {
+  font-size: 9.5px;
+  font-weight: 750;
+  color: #55483f;
+  background: #e6dcce;
+  padding: 1.5px 6px;
+  border-radius: 4px;
+  letter-spacing: -0.2px;
+}
+
+.service-arrow {
+  font-size: 12px;
+  font-weight: 700;
+  color: #a89f92;
+  transition: transform 0.15s ease, color 0.15s ease;
+}
+
+.family-service-item:hover .service-arrow {
+  transform: translate(2px, -2px);
+  color: #d97706;
 }
 #user-nav {
   display: flex;
@@ -528,10 +732,18 @@ td:first-child {
   .tag {
     display: none;
   }
-  .btn-service-switch {
-    font-size: 11px;
-    padding: 4px 8px;
-    gap: 3px;
+  .btn-launcher {
+    font-size: 10.5px;
+    padding: 0 8px;
+    height: 26px;
+    min-height: 26px;
+    max-height: 26px;
+    line-height: 23px;
+  }
+  .family-menu-popover {
+    width: 250px;
+    left: 0;
+    max-width: calc(100vw - 24px);
   }
   #user-nav {
     gap: 6px;
