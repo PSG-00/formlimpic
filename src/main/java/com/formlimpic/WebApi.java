@@ -126,6 +126,15 @@ public class WebApi {
         return Map.of("ok", true, "user", newProfile);
     }
 
+    @DeleteMapping("/my/webhook")
+    Object deleteWebhook(HttpSession session) {
+        UserProfile user = requireUser(session);
+        ReceiptStore.User updated = store.updateWebhook(user.id(), "");
+        UserProfile newProfile = new UserProfile(updated.id(), updated.username(), updated.membershipCode(), updated.discordWebhookUrl(), updated.role());
+        session.setAttribute("auth_user", newProfile);
+        return Map.of("ok", true, "user", newProfile);
+    }
+
     @PostMapping("/my/webhook/test")
     Object testWebhook(@RequestBody(required = false) WebhookRequest req, HttpSession session) {
         UserProfile user = requireUser(session);

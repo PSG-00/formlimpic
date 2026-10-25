@@ -413,6 +413,7 @@ async function renderMyPage(tab = 'submissions') {
             <input name="webhook" placeholder="https://discord.com/api/webhooks/..." value="${esc(currentUser.discordWebhookUrl || '')}">
             <button type="submit" class="secondary">저장</button>
             <button type="button" id="btn-test-webhook" class="secondary" style="background:#f9f9f9;">테스트 전송</button>
+            <button type="button" id="btn-delete-webhook" class="btn-danger" style="display:${currentUser.discordWebhookUrl ? 'inline-block' : 'none'};">웹훅 제거</button>
           </div>
         </form>
       </div>
@@ -445,6 +446,25 @@ async function renderMyPage(tab = 'submissions') {
     }
   }
 
+  const btnDeleteWebhook = document.querySelector('#btn-delete-webhook');
+  if (btnDeleteWebhook) {
+    btnDeleteWebhook.onclick = async () => {
+      if (!confirm('등록된 디스코드 웹훅 알림을 제거하시겠습니까?')) return;
+      btnDeleteWebhook.disabled = true;
+      try {
+        const res = await api('/my/webhook', 'DELETE');
+        currentUser = res.user;
+        document.querySelector('[name="webhook"]').value = '';
+        btnDeleteWebhook.style.display = 'none';
+        toast('디스코드 웹훅이 제거되었습니다.');
+      } catch (err) {
+        toast(err.message);
+      } finally {
+        btnDeleteWebhook.disabled = false;
+      }
+    };
+  }
+
   document.querySelector('#webhook-form').onsubmit = async e => {
     e.preventDefault();
     const f = new FormData(e.target);
@@ -453,6 +473,9 @@ async function renderMyPage(tab = 'submissions') {
     try {
       const res = await api('/my/webhook', 'PUT', { webhookUrl: f.get('webhook') });
       currentUser = res.user;
+      if (btnDeleteWebhook) {
+        btnDeleteWebhook.style.display = currentUser.discordWebhookUrl ? 'inline-block' : 'none';
+      }
       toast('디스코드 웹훅 주소가 저장되었습니다.');
     } catch (err) {
       toast(err.message);

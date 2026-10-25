@@ -61,6 +61,21 @@ class WebApiAuthTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.user.discordWebhookUrl").value("https://discord.com/api/webhooks/123/abc"));
 
+        // 4-1. Delete Webhook URL
+        mockMvc.perform(delete("/api/my/webhook")
+                        .session(session)
+                        .header("X-Formlimpic", "formlimpic"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.user.discordWebhookUrl").value(""));
+
+        // Re-set for later steps if needed
+        mockMvc.perform(put("/api/my/webhook")
+                        .session(session)
+                        .header("X-Formlimpic", "formlimpic")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"webhookUrl\":\"https://discord.com/api/webhooks/123/abc\"}"))
+                .andExpect(status().isOk());
+
         // 5. Create Form (authorized)
         String nowPlus1h = Instant.now().plusSeconds(3600).toString();
         String nowPlus2h = Instant.now().plusSeconds(7200).toString();
