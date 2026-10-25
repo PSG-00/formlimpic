@@ -676,6 +676,11 @@ td:first-child {
   display: inline-flex;
   align-items: center;
   white-space: nowrap;
+  cursor: pointer;
+}
+.delay-badge:hover {
+  background: #bae6fd;
+  color: #0369a1;
 }
 .badge-group {
   display: inline-flex;
@@ -687,19 +692,13 @@ td:first-child {
   align-items: center;
   gap: 8px;
   margin-top: 14px;
-  position: relative;
 }
-.delay-help-wrapper {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-.delay-help-icon {
+.delay-help-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   background: #f1f5f9;
   border: 1px solid #cbd5e1;
@@ -707,71 +706,133 @@ td:first-child {
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
+  padding: 0;
+  margin: 0;
+  line-height: 1;
+  transition: all 0.15s ease;
   user-select: none;
-  transition: all 0.2s ease;
 }
-.delay-help-icon:hover, .delay-help-icon:focus {
+.delay-help-btn:hover, .delay-help-btn:focus {
   background: #e2e8f0;
   color: #0f172a;
   border-color: #94a3b8;
   outline: none;
 }
-.delay-tooltip-popover {
-  display: none;
-  position: absolute;
-  top: calc(100% + 10px);
-  left: 0;
-  width: 320px;
-  max-width: 90vw;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 14px;
-  box-shadow: 0 12px 30px -4px rgba(15, 23, 42, 0.2), 0 4px 12px -2px rgba(15, 23, 42, 0.1);
-  padding: 14px;
-  z-index: 9999;
+/* Modal Dialog for Delay Guide */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
 }
-@media (min-width: 500px) {
-  .delay-tooltip-popover {
-    width: 380px;
+.modal-overlay.hidden {
+  display: none !important;
+}
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.7);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+.modal-window {
+  position: relative;
+  z-index: 1;
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: modalPop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  width: 520px;
+  max-width: 92vw;
+  max-height: 90vh;
+}
+@keyframes modalPop {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
   }
 }
-.delay-help-wrapper:hover .delay-tooltip-popover,
-.delay-tooltip-popover.is-active {
-  display: block;
-}
-.delay-tooltip-header {
+.modal-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: 10px;
-  font-size: 13px;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid #f1f5f9;
+  background: #fafafa;
+  flex-shrink: 0;
+}
+.modal-title {
+  font-size: 16px;
   font-weight: 700;
   color: #1e293b;
+  margin: 0;
 }
-.delay-tooltip-close {
-  display: none;
-  cursor: pointer;
-  font-size: 18px;
+.modal-close {
+  background: transparent;
+  border: none;
+  font-size: 26px;
   line-height: 1;
-  color: #94a3b8;
-  padding: 2px 6px;
+  color: #64748b;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
 }
-.delay-tooltip-popover.is-active .delay-tooltip-close {
-  display: inline-block;
+.modal-close:hover, .modal-close:focus {
+  background: #e2e8f0;
+  color: #0f172a;
+  outline: none;
 }
-.delay-guide-img {
+.modal-body {
+  padding: 16px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  flex: 1;
+  text-align: center;
+}
+.modal-delay-img {
   width: 100%;
   height: auto;
   border-radius: 10px;
-  border: 1px solid #f1f5f9;
+  border: 1px solid #e2e8f0;
   display: block;
 }
-.delay-tooltip-footer {
-  margin: 10px 0 0;
-  font-size: 11px;
+.modal-delay-note {
+  margin: 12px 0 0;
+  font-size: 12px;
   color: #64748b;
   line-height: 1.4;
   word-break: keep-all;
+  text-align: left;
+}
+@media (max-width: 650px) {
+  .modal-overlay {
+    padding: 12px;
+  }
+  .modal-window {
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
+    border-radius: 14px;
+  }
+  .modal-header {
+    padding: 12px 16px;
+  }
+  .modal-body {
+    padding: 12px;
+  }
 }
 .admin-card {
   background: linear-gradient(135deg, #fdf4ff 0%, #fae8ff 100%);

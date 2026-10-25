@@ -496,7 +496,7 @@ async function renderMyPage(tab = 'submissions') {
             <a class="sub-card-title" href="#form/${f.id}">${esc(f.title)}</a>
             <div style="display:flex;gap:6px;align-items:center;">
               <span class="badge">${phase(f)}</span>
-              ${f.hasDelay ? '<span class="delay-badge">딜레이</span>' : ''}
+              ${f.hasDelay ? '<span class="delay-badge" onclick="event.preventDefault();event.stopPropagation();openDelayModal();" title="대기열 딜레이 안내 보기">딜레이</span>' : ''}
               ${f.adminCreated ? '<span class="admin-badge">👑 관리자</span>' : ''}
             </div>
           </div>
@@ -536,7 +536,7 @@ async function renderMyPage(tab = 'submissions') {
             <div class="badge-row">
               <span class="badge">${phase(f)}</span>
               <div class="badge-group">
-                ${f.hasDelay ? '<span class="delay-badge">딜레이</span>' : ''}
+                ${f.hasDelay ? '<span class="delay-badge" onclick="event.preventDefault();event.stopPropagation();openDelayModal();" title="대기열 딜레이 안내 보기">딜레이</span>' : ''}
                 ${f.adminCreated ? '<span class="admin-badge">👑 관리자</span>' : ''}
               </div>
             </div>
@@ -573,7 +573,7 @@ async function renderHome() {
           <div class="badge-row">
             <span class="badge">${phase(f)}</span>
             <div class="badge-group">
-              ${f.hasDelay ? '<span class="delay-badge">딜레이</span>' : ''}
+              ${f.hasDelay ? '<span class="delay-badge" onclick="event.preventDefault();event.stopPropagation();openDelayModal();" title="대기열 딜레이 안내 보기">딜레이</span>' : ''}
               ${f.adminCreated ? '<span class="admin-badge">👑 관리자</span>' : ''}
             </div>
           </div>
@@ -622,17 +622,7 @@ function renderCreate() {
             <input name="hasDelay" type="checkbox" checked>
             <span>딜레이 추가</span>
           </label>
-          <div class="delay-help-wrapper">
-            <span class="delay-help-icon" id="delay-help-btn" tabindex="0" role="button" aria-label="딜레이 정보 보기">?</span>
-            <div class="delay-tooltip-popover" id="delay-help-popover">
-              <div class="delay-tooltip-header">
-                <span>대기열 딜레이 안내</span>
-                <span class="delay-tooltip-close" id="delay-help-close">&times;</span>
-              </div>
-              <img src="/formlimpic_delay_guide.png" alt="대기열 딜레이 가이드" class="delay-guide-img">
-              <p class="delay-tooltip-footer">※ 실제 신청 인원 및 네트워크 상황에 따라 딜레이는 변동될 수 있습니다.</p>
-            </div>
-          </div>
+          <button type="button" class="delay-help-btn" onclick="openDelayModal()" aria-label="딜레이 안내 보기" title="대기열 딜레이 안내 보기">?</button>
         </div>
         <p class="small muted" style="margin-top:4px;margin-bottom:18px;">체크 시 대기열 트래픽 및 네트워크 응답 지연(40ms~320ms)을 시뮬레이션합니다.</p>
         <div class="notice">신청 시각 이전 제출은 정상 신청자 뒤에 배정됩니다. 마감 후 이름·멤버십 코드·순위·접수 시각이 공개됩니다.</div>
@@ -640,27 +630,6 @@ function renderCreate() {
       </form>
     </div>
   `;
-
-  const helpBtn = document.querySelector('#delay-help-btn');
-  const popover = document.querySelector('#delay-help-popover');
-  const closeBtn = document.querySelector('#delay-help-close');
-  if (helpBtn && popover) {
-    helpBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      popover.classList.toggle('is-active');
-    });
-    if (closeBtn) {
-      closeBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        popover.classList.remove('is-active');
-      });
-    }
-    document.addEventListener('click', (e) => {
-      if (!popover.contains(e.target) && e.target !== helpBtn) {
-        popover.classList.remove('is-active');
-      }
-    });
-  }
 
   document.querySelector('#create').onsubmit = async e => {
     e.preventDefault();
@@ -698,7 +667,7 @@ async function renderDetail(id) {
       <div class="badge-row">
         <span class="badge" id="phase">${phase(f)}</span>
         <div class="badge-group">
-          ${f.hasDelay ? '<span class="delay-badge">딜레이</span>' : ''}
+          ${f.hasDelay ? '<span class="delay-badge" onclick="event.preventDefault();event.stopPropagation();openDelayModal();" title="대기열 딜레이 안내 보기">딜레이</span>' : ''}
           ${f.adminCreated ? '<span class="admin-badge">👑 관리자</span>' : ''}
         </div>
       </div>
@@ -911,6 +880,23 @@ async function renderWizard(id) {
 
   render();
 }
+
+function openDelayModal() {
+  const m = document.getElementById('delay-modal');
+  if (m) {
+    m.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+  }
+}
+function closeDelayModal() {
+  const m = document.getElementById('delay-modal');
+  if (m) {
+    m.classList.add('hidden');
+    document.body.style.overflow = '';
+  }
+}
+window.openDelayModal = openDelayModal;
+window.closeDelayModal = closeDelayModal;
 
 window.addEventListener('hashchange', route);
 (async () => {
