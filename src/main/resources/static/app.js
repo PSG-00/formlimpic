@@ -617,14 +617,14 @@ function renderCreate() {
           <span>버블(Bubble) 항목 추가</span>
         </label>
         <p class="small muted" style="margin-top:-2px;margin-bottom:14px;">체크 시 폼 신청 시 마지막에 버블 인증 입력란이 추가됩니다.</p>
-        <div class="delay-setting-wrap">
-          <label class="checkbox-field" style="margin-bottom:0;">
-            <input name="hasDelay" type="checkbox" checked>
+        <label class="checkbox-field">
+          <input name="hasDelay" type="checkbox" checked>
+          <span style="display:inline-flex;align-items:center;gap:6px;">
             <span>딜레이 추가</span>
-          </label>
-          <button type="button" class="delay-help-btn" onclick="openDelayModal()" aria-label="딜레이 안내 보기" title="대기열 딜레이 안내 보기">?</button>
-        </div>
-        <p class="small muted" style="margin-top:4px;margin-bottom:18px;">체크 시 대기열 트래픽 및 네트워크 응답 지연(40ms~320ms)을 시뮬레이션합니다.</p>
+            <span class="delay-help-btn" onclick="event.preventDefault();event.stopPropagation();openDelayModal();" role="button" tabindex="0" aria-label="딜레이 안내 보기" title="대기열 딜레이 안내 보기">?</span>
+          </span>
+        </label>
+        <p class="small muted" style="margin-top:-2px;margin-bottom:18px;">체크 시 대기열 트래픽 및 네트워크 응답 지연(40ms~320ms)을 시뮬레이션합니다.</p>
         <div class="notice">신청 시각 이전 제출은 정상 신청자 뒤에 배정됩니다. 마감 후 이름·멤버십 코드·순위·접수 시각이 공개됩니다.</div>
         <button>폼림픽 생성하기</button>
       </form>

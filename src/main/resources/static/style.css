@@ -687,23 +687,17 @@ td:first-child {
   align-items: center;
   gap: 6px;
 }
-.delay-setting-wrap {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 14px;
-}
 .delay-help-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   background: #f1f5f9;
   border: 1px solid #cbd5e1;
   color: #64748b;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   cursor: pointer;
   padding: 0;
@@ -711,6 +705,9 @@ td:first-child {
   line-height: 1;
   transition: all 0.15s ease;
   user-select: none;
+  flex-shrink: 0;
+  position: relative;
+  top: -1px;
 }
 .delay-help-btn:hover, .delay-help-btn:focus {
   background: #e2e8f0;
