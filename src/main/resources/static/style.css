@@ -665,6 +665,114 @@ td:first-child {
   align-items: center;
   white-space: nowrap;
 }
+.delay-badge {
+  background: #e0f2fe;
+  color: #0284c7;
+  border: 1px solid #bae6fd;
+  font-weight: 700;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+.badge-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.delay-setting-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  position: relative;
+}
+.delay-help-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.delay-help-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.2s ease;
+}
+.delay-help-icon:hover, .delay-help-icon:focus {
+  background: #e2e8f0;
+  color: #0f172a;
+  border-color: #94a3b8;
+  outline: none;
+}
+.delay-tooltip-popover {
+  display: none;
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 0;
+  width: 320px;
+  max-width: 90vw;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  box-shadow: 0 12px 30px -4px rgba(15, 23, 42, 0.2), 0 4px 12px -2px rgba(15, 23, 42, 0.1);
+  padding: 14px;
+  z-index: 9999;
+}
+@media (min-width: 500px) {
+  .delay-tooltip-popover {
+    width: 380px;
+  }
+}
+.delay-help-wrapper:hover .delay-tooltip-popover,
+.delay-tooltip-popover.is-active {
+  display: block;
+}
+.delay-tooltip-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #1e293b;
+}
+.delay-tooltip-close {
+  display: none;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  color: #94a3b8;
+  padding: 2px 6px;
+}
+.delay-tooltip-popover.is-active .delay-tooltip-close {
+  display: inline-block;
+}
+.delay-guide-img {
+  width: 100%;
+  height: auto;
+  border-radius: 10px;
+  border: 1px solid #f1f5f9;
+  display: block;
+}
+.delay-tooltip-footer {
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.4;
+  word-break: keep-all;
+}
 .admin-card {
   background: linear-gradient(135deg, #fdf4ff 0%, #fae8ff 100%);
   border: 1px solid #f0abfc;

@@ -18,15 +18,18 @@ public final class ReceiptStore implements AutoCloseable {
             this(id, username, passwordHash, membershipCode, discordWebhookUrl, "USER", createdAt);
         }
     }
-    public record Form(String id, String owner, String title, String content, Instant startsAt, Instant expiresAt, boolean hasBubble, boolean adminCreated) {
+    public record Form(String id, String owner, String title, String content, Instant startsAt, Instant expiresAt, boolean hasBubble, boolean adminCreated, boolean hasDelay) {
+        public Form(String id, String owner, String title, String content, Instant startsAt, Instant expiresAt, boolean hasBubble, boolean adminCreated) {
+            this(id, owner, title, content, startsAt, expiresAt, hasBubble, adminCreated, true);
+        }
         public Form(String id, String owner, String title, String content, Instant startsAt, Instant expiresAt, boolean hasBubble) {
-            this(id, owner, title, content, startsAt, expiresAt, hasBubble, false);
+            this(id, owner, title, content, startsAt, expiresAt, hasBubble, false, true);
         }
         public Form(String id, String owner, String title, String content, Instant startsAt, Instant expiresAt) {
-            this(id, owner, title, content, startsAt, expiresAt, false, false);
+            this(id, owner, title, content, startsAt, expiresAt, false, false, true);
         }
         public Form(String id, String title, String content, Instant startsAt, Instant expiresAt) {
-            this(id, "", title, content, startsAt, expiresAt, false, false);
+            this(id, "", title, content, startsAt, expiresAt, false, false, true);
         }
     }
     public record Ticket(String id, String formId, String owner, String code) {}
@@ -206,7 +209,8 @@ public final class ReceiptStore implements AutoCloseable {
                         adminCreated = true;
                     }
                 }
-                forms.put(id, new Form(id, owner, p.getProperty("title"), p.getProperty("content"), Instant.parse(p.getProperty("start")), Instant.parse(p.getProperty("end")), Boolean.parseBoolean(p.getProperty("hasBubble", "false")), adminCreated));
+                boolean hasDelay = Boolean.parseBoolean(p.getProperty("hasDelay", "true"));
+                forms.put(id, new Form(id, owner, p.getProperty("title"), p.getProperty("content"), Instant.parse(p.getProperty("start")), Instant.parse(p.getProperty("end")), Boolean.parseBoolean(p.getProperty("hasBubble", "false")), adminCreated, hasDelay));
             }
             case "form_deleted" -> {
                 forms.remove(id);
@@ -286,17 +290,20 @@ public final class ReceiptStore implements AutoCloseable {
     public synchronized Form form(String id) { Form f = forms.get(id); if (f == null) throw new IllegalArgumentException("폼림픽을 찾을 수 없습니다."); return f; }
     public Instant now() { return clock.instant(); }
     public synchronized Form create(String title, String content, Instant start, Instant end) {
-        return create("", title, content, start, end, false);
+        return create("", title, content, start, end, false, true);
     }
     public synchronized Form create(String owner, String title, String content, Instant start, Instant end) {
-        return create(owner, title, content, start, end, false);
+        return create(owner, title, content, start, end, false, true);
     }
     public synchronized Form create(String owner, String title, String content, Instant start, Instant end, boolean hasBubble) {
+        return create(owner, title, content, start, end, hasBubble, true);
+    }
+    public synchronized Form create(String owner, String title, String content, Instant start, Instant end, boolean hasBubble, boolean hasDelay) {
         title = text(title, 120); content = text(content, 10000);
         if (start == null || end == null || !start.isAfter(now()) || !end.isAfter(start)) throw new IllegalArgumentException("시작은 현재 이후, 만료는 시작 이후여야 합니다.");
         String id = UUID.randomUUID().toString();
         boolean adminCreated = isOwnerAdmin(owner);
-        append(props("type", "form", "id", id, "owner", owner != null ? owner : "", "title", title, "content", content, "start", start.toString(), "end", end.toString(), "hasBubble", Boolean.toString(hasBubble), "adminCreated", Boolean.toString(adminCreated)));
+        append(props("type", "form", "id", id, "owner", owner != null ? owner : "", "title", title, "content", content, "start", start.toString(), "end", end.toString(), "hasBubble", Boolean.toString(hasBubble), "adminCreated", Boolean.toString(adminCreated), "hasDelay", Boolean.toString(hasDelay)));
         return forms.get(id);
     }
     private void open(Form f, Instant time) {

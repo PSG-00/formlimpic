@@ -175,4 +175,27 @@ class ReceiptStoreTests {
             assertEquals("CarolBubble", restoredReceipt.bubble());
         }
     }
+
+    @Test
+    void formDelayOption() throws Exception {
+        TestClock clock = new TestClock();
+        Path path = dir.resolve("delay_journal");
+        String formWithDelayId;
+        String formWithoutDelayId;
+        try (ReceiptStore s = new ReceiptStore(path, clock)) {
+            var user = s.registerUser("dave", "hash");
+            var f1 = s.create(user.id(), "Delay Form", "content", clock.value.plusSeconds(5), clock.value.plusSeconds(20), false, true);
+            var f2 = s.create(user.id(), "No Delay Form", "content", clock.value.plusSeconds(5), clock.value.plusSeconds(20), false, false);
+            formWithDelayId = f1.id();
+            formWithoutDelayId = f2.id();
+            assertTrue(f1.hasDelay());
+            assertFalse(f2.hasDelay());
+        }
+        try (ReceiptStore restored = new ReceiptStore(path, clock)) {
+            var restoredF1 = restored.form(formWithDelayId);
+            var restoredF2 = restored.form(formWithoutDelayId);
+            assertTrue(restoredF1.hasDelay());
+            assertFalse(restoredF2.hasDelay());
+        }
+    }
 }

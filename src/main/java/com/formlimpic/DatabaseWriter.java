@@ -34,6 +34,7 @@ public class DatabaseWriter {
                 jdbc.execute("ALTER TABLE forms ADD COLUMN IF NOT EXISTS owner_id UUID");
                 jdbc.execute("ALTER TABLE forms ADD COLUMN IF NOT EXISTS has_bubble BOOLEAN DEFAULT FALSE");
                 jdbc.execute("ALTER TABLE forms ADD COLUMN IF NOT EXISTS admin_created BOOLEAN DEFAULT FALSE");
+                jdbc.execute("ALTER TABLE forms ADD COLUMN IF NOT EXISTS has_delay BOOLEAN DEFAULT TRUE");
                 jdbc.execute("CREATE TABLE IF NOT EXISTS memberships (id UUID PRIMARY KEY, form_id UUID NOT NULL REFERENCES forms(id), owner_id UUID NOT NULL, code CHAR(6) NOT NULL, UNIQUE(form_id, code), UNIQUE(form_id, owner_id))");
                 jdbc.execute("CREATE TABLE IF NOT EXISTS submissions (id UUID PRIMARY KEY, form_id UUID NOT NULL REFERENCES forms(id), ticket_id UUID NOT NULL UNIQUE REFERENCES memberships(id), name TEXT NOT NULL, phone TEXT NOT NULL, code CHAR(6) NOT NULL, received_at TIMESTAMPTZ NOT NULL, admission_sequence BIGINT NOT NULL UNIQUE, early BOOLEAN NOT NULL)");
                 jdbc.execute("ALTER TABLE submissions ADD COLUMN IF NOT EXISTS birth_date TEXT");
@@ -59,7 +60,8 @@ public class DatabaseWriter {
                 Object ownerId = (owner != null && owner.matches("[0-9a-f-]{36}")) ? java.util.UUID.fromString(owner) : null;
                 boolean hasBubble = Boolean.parseBoolean(p.getProperty("hasBubble", "false"));
                 boolean adminCreated = Boolean.parseBoolean(p.getProperty("adminCreated", "false"));
-                jdbc.update("INSERT INTO forms (id, owner_id, title, content, starts_at, expires_at, has_bubble, admin_created) VALUES (?::uuid, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET has_bubble = EXCLUDED.has_bubble, admin_created = EXCLUDED.admin_created", p.getProperty("id"), ownerId, p.getProperty("title"), p.getProperty("content"), time(p, "start"), time(p, "end"), hasBubble, adminCreated);
+                boolean hasDelay = Boolean.parseBoolean(p.getProperty("hasDelay", "true"));
+                jdbc.update("INSERT INTO forms (id, owner_id, title, content, starts_at, expires_at, has_bubble, admin_created, has_delay) VALUES (?::uuid, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET has_bubble = EXCLUDED.has_bubble, admin_created = EXCLUDED.admin_created, has_delay = EXCLUDED.has_delay", p.getProperty("id"), ownerId, p.getProperty("title"), p.getProperty("content"), time(p, "start"), time(p, "end"), hasBubble, adminCreated, hasDelay);
             }
             case "form_deleted" -> {
                 String formId = p.getProperty("id");

@@ -496,6 +496,7 @@ async function renderMyPage(tab = 'submissions') {
             <a class="sub-card-title" href="#form/${f.id}">${esc(f.title)}</a>
             <div style="display:flex;gap:6px;align-items:center;">
               <span class="badge">${phase(f)}</span>
+              ${f.hasDelay ? '<span class="delay-badge">딜레이</span>' : ''}
               ${f.adminCreated ? '<span class="admin-badge">👑 관리자</span>' : ''}
             </div>
           </div>
@@ -534,7 +535,10 @@ async function renderMyPage(tab = 'submissions') {
           <a class="card" href="#form/${f.id}">
             <div class="badge-row">
               <span class="badge">${phase(f)}</span>
-              ${f.adminCreated ? '<span class="admin-badge">👑 관리자</span>' : ''}
+              <div class="badge-group">
+                ${f.hasDelay ? '<span class="delay-badge">딜레이</span>' : ''}
+                ${f.adminCreated ? '<span class="admin-badge">👑 관리자</span>' : ''}
+              </div>
             </div>
             <h2>${esc(f.title)}</h2>
             <p class="muted">신청 ${date(f.startsAt)}<br>마감 ${date(f.expiresAt)}</p>
@@ -568,7 +572,10 @@ async function renderHome() {
         <a class="card" href="#form/${f.id}">
           <div class="badge-row">
             <span class="badge">${phase(f)}</span>
-            ${f.adminCreated ? '<span class="admin-badge">👑 관리자</span>' : ''}
+            <div class="badge-group">
+              ${f.hasDelay ? '<span class="delay-badge">딜레이</span>' : ''}
+              ${f.adminCreated ? '<span class="admin-badge">👑 관리자</span>' : ''}
+            </div>
           </div>
           <h2>${esc(f.title)}</h2>
           <p class="muted">신청 ${date(f.startsAt)}<br>마감 ${date(f.expiresAt)}</p>
@@ -609,12 +616,52 @@ function renderCreate() {
           <input name="hasBubble" type="checkbox">
           <span>버블(Bubble) 항목 추가</span>
         </label>
-        <p class="small muted" style="margin-top:-2px;margin-bottom:18px;">체크 시 폼 신청 시 마지막에 버블 인증 입력란이 추가됩니다.</p>
+        <p class="small muted" style="margin-top:-2px;margin-bottom:14px;">체크 시 폼 신청 시 마지막에 버블 인증 입력란이 추가됩니다.</p>
+        <div class="delay-setting-wrap">
+          <label class="checkbox-field" style="margin-bottom:0;">
+            <input name="hasDelay" type="checkbox" checked>
+            <span>딜레이 추가</span>
+          </label>
+          <div class="delay-help-wrapper">
+            <span class="delay-help-icon" id="delay-help-btn" tabindex="0" role="button" aria-label="딜레이 정보 보기">?</span>
+            <div class="delay-tooltip-popover" id="delay-help-popover">
+              <div class="delay-tooltip-header">
+                <span>대기열 딜레이 안내</span>
+                <span class="delay-tooltip-close" id="delay-help-close">&times;</span>
+              </div>
+              <img src="/formlimpic_delay_guide.png" alt="대기열 딜레이 가이드" class="delay-guide-img">
+              <p class="delay-tooltip-footer">※ 실제 신청 인원 및 네트워크 상황에 따라 딜레이는 변동될 수 있습니다.</p>
+            </div>
+          </div>
+        </div>
+        <p class="small muted" style="margin-top:4px;margin-bottom:18px;">체크 시 대기열 트래픽 및 네트워크 응답 지연(40ms~320ms)을 시뮬레이션합니다.</p>
         <div class="notice">신청 시각 이전 제출은 정상 신청자 뒤에 배정됩니다. 마감 후 이름·멤버십 코드·순위·접수 시각이 공개됩니다.</div>
         <button>폼림픽 생성하기</button>
       </form>
     </div>
   `;
+
+  const helpBtn = document.querySelector('#delay-help-btn');
+  const popover = document.querySelector('#delay-help-popover');
+  const closeBtn = document.querySelector('#delay-help-close');
+  if (helpBtn && popover) {
+    helpBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      popover.classList.toggle('is-active');
+    });
+    if (closeBtn) {
+      closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        popover.classList.remove('is-active');
+      });
+    }
+    document.addEventListener('click', (e) => {
+      if (!popover.contains(e.target) && e.target !== helpBtn) {
+        popover.classList.remove('is-active');
+      }
+    });
+  }
+
   document.querySelector('#create').onsubmit = async e => {
     e.preventDefault();
     const b = e.submitter;
@@ -626,7 +673,8 @@ function renderCreate() {
         content: f.get('content'),
         startsAt: new Date(f.get('start')).toISOString(),
         expiresAt: new Date(f.get('end')).toISOString(),
-        hasBubble: f.get('hasBubble') === 'on'
+        hasBubble: f.get('hasBubble') === 'on',
+        hasDelay: f.get('hasDelay') === 'on'
       });
       location.hash = 'form/' + r.id;
     } catch (x) {
@@ -649,7 +697,10 @@ async function renderDetail(id) {
       </div>
       <div class="badge-row">
         <span class="badge" id="phase">${phase(f)}</span>
-        ${f.adminCreated ? '<span class="admin-badge">👑 관리자</span>' : ''}
+        <div class="badge-group">
+          ${f.hasDelay ? '<span class="delay-badge">딜레이</span>' : ''}
+          ${f.adminCreated ? '<span class="admin-badge">👑 관리자</span>' : ''}
+        </div>
       </div>
       <h1>${esc(f.title)}</h1>
       <div class="content">${esc(f.content)}</div>

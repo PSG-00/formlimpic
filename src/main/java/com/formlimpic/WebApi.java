@@ -36,7 +36,7 @@ public class WebApi {
         this.discordService = discordService;
     }
 
-    record NewForm(String title, String content, Instant startsAt, Instant expiresAt, Boolean hasBubble) {}
+    record NewForm(String title, String content, Instant startsAt, Instant expiresAt, Boolean hasBubble, Boolean hasDelay) {}
     record Answer(String name, String birthDate, String phone, String bubble) {
         public Answer(String name, String phone) {
             this(name, "", phone, "");
@@ -176,7 +176,8 @@ public class WebApi {
             throw new IllegalArgumentException("현재 관리자만 폼림픽을 개설할 수 있습니다.");
         }
         boolean hasBubble = f.hasBubble() != null && f.hasBubble();
-        return store.create(user.id(), f.title(), f.content(), f.startsAt(), f.expiresAt(), hasBubble);
+        boolean hasDelay = f.hasDelay() == null || f.hasDelay();
+        return store.create(user.id(), f.title(), f.content(), f.startsAt(), f.expiresAt(), hasBubble, hasDelay);
     }
 
     @DeleteMapping("/forms/{id}")
@@ -214,7 +215,7 @@ public class WebApi {
     Object submit(@PathVariable String id, @RequestBody Answer a, HttpSession session) {
         UserProfile user = requireUser(session);
         ReceiptStore.Form form = store.form(id);
-        if (form != null) {
+        if (form != null && form.hasDelay()) {
             long diffFromStart = System.currentTimeMillis() - form.startsAt().toEpochMilli();
             int delay;
             if (diffFromStart < -400) {
