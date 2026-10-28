@@ -93,4 +93,37 @@ class RateLimitFilterTests {
             assertEquals(200, res.getStatus());
         }
     }
+
+    @Test
+    void resolveClientIpPrioritizesXRealIpOverOtherHeaders() {
+        MockHttpServletRequest req = new MockHttpServletRequest();
+        req.addHeader("X-Real-IP", "203.0.113.195");
+        req.addHeader("X-Forwarded-For", "198.51.100.1, 203.0.113.195");
+        req.addHeader("CF-Connecting-IP", "198.51.100.2");
+        req.setRemoteAddr("127.0.0.1");
+
+        assertEquals("203.0.113.195", filter.resolveClientIp(req));
+    }
+
+    @Test
+    void resolveClientIpPreventsSpoofingByTakingLastXffIp() {
+        MockHttpServletRequest req = new MockHttpServletRequest();
+        // Attacker attempts spoofing with fake IP in XFF, Caddy appends real IP at the end
+        req.addHeader("X-Forwarded-For", "1.2.3.4, 5.6.7.8, 203.0.113.50");
+        req.setRemoteAddr("127.0.0.1");
+
+        assertEquals("203.0.113.50", filter.resolveClientIp(req));
+    }
+
+    @Test
+    void resolveClientIpFallsBackToCfConnectingIpAndRemoteAddr() {
+        MockHttpServletRequest reqCf = new MockHttpServletRequest();
+        reqCf.addHeader("CF-Connecting-IP", "104.28.1.1");
+        reqCf.setRemoteAddr("127.0.0.1");
+        assertEquals("104.28.1.1", filter.resolveClientIp(reqCf));
+
+        MockHttpServletRequest reqDirect = new MockHttpServletRequest();
+        reqDirect.setRemoteAddr("172.16.0.5");
+        assertEquals("172.16.0.5", filter.resolveClientIp(reqDirect));
+    }
 }

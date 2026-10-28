@@ -5,7 +5,7 @@ server:
     threads:
       max: 200
       min-spare: 100
-    accept-count: 2000
+    accept-count: 5000
     max-connections: 10000
     connection-timeout: 60000
     keep-alive-timeout: 60000

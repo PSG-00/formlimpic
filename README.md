@@ -345,7 +345,7 @@ c:\Project\spring\formlimpic
 - **개인정보 격리**: 결과 조회 API(`GET /forms/{id}/results`)에서 전화번호, 생년월일, 버블 정보를 완전히 배제한 경량 `Row` DTO 반환.
 
 ### 3) [`RateLimitFilter.java`](file:///c:/Project/spring/formlimpic/src/main/java/com/formlimpic/RateLimitFilter.java) — 디도스 및 매크로 연타 차단
-- Cloudflare(`CF-Connecting-IP`) 및 프록시(`X-Forwarded-For`), `remoteAddr` 기준 IP 추출.
+- Caddy(`X-Real-IP`, `X-Forwarded-For` 마지막 IP), Cloudflare(`CF-Connecting-IP`), `remoteAddr` 기준 IP 스푸핑 방지 및 안전한 실제 IP 추출.
 - 동일 IP 기준 **초당 15회 초과 시 즉시 HTTP 429 Too Many Requests 반환**.
 - 정각 선착순 광클(초당 1~2회)은 정상 통과하고, 매크로 봇의 1,000연타 공격은 입구에서 컷.
 

@@ -135,14 +135,25 @@ public class RateLimitFilter implements Filter {
         chain.doFilter(request, response);
     }
 
-    private String resolveClientIp(HttpServletRequest req) {
-        String cfIp = req.getHeader("CF-Connecting-IP");
-        if (cfIp != null && !cfIp.isBlank()) return cfIp.trim();
+    String resolveClientIp(HttpServletRequest req) {
+        // 1. Caddy 등의 리버스 프록시가 직접 검증하여 주입한 실제 공인 IP (위조 불가)
+        String realIp = req.getHeader("X-Real-IP");
+        if (realIp != null && !realIp.isBlank()) {
+            return realIp.trim();
+        }
 
+        // 2. X-Forwarded-For: 단일 리버스 프록시(Caddy) 뒤에서는 프록시가 가장 마지막에 덧붙인 IP가 실제 접속자 IP
+        //    (클라이언트가 헤더에 가짜 IP를 임의로 조작해 보낸 스푸핑 방지)
         String xff = req.getHeader("X-Forwarded-For");
         if (xff != null && !xff.isBlank()) {
-            int commaIdx = xff.indexOf(',');
-            return (commaIdx != -1 ? xff.substring(0, commaIdx) : xff).trim();
+            int lastComma = xff.lastIndexOf(',');
+            return (lastComma != -1 ? xff.substring(lastComma + 1) : xff).trim();
+        }
+
+        // 3. Cloudflare 프록시 환경 폴백 (X-Real-IP 및 XFF가 없을 경우)
+        String cfIp = req.getHeader("CF-Connecting-IP");
+        if (cfIp != null && !cfIp.isBlank()) {
+            return cfIp.trim();
         }
 
         return req.getRemoteAddr();
