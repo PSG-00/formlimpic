@@ -62,14 +62,19 @@ public class WebApi {
         return (UserProfile) session.getAttribute("auth_user");
     }
 
-    private UserProfile requireUser(HttpSession session) {
-        UserProfile u = current(session);
+    // HttpSession 파라미터는 세션이 없으면 새로 만들기 때문에, 로그인 확인만 하는 곳은 getSession(false)로 읽는다
+    private UserProfile current(HttpServletRequest req) {
+        return current(req.getSession(false));
+    }
+
+    private UserProfile requireUser(HttpServletRequest req) {
+        UserProfile u = current(req);
         if (u == null) throw new IllegalArgumentException("로그인이 필요합니다.");
         return u;
     }
 
-    private UserProfile requireAdmin(HttpSession session) {
-        UserProfile u = requireUser(session);
+    private UserProfile requireAdmin(HttpServletRequest req) {
+        UserProfile u = requireUser(req);
         if (!"ADMIN".equalsIgnoreCase(u.role())) {
             throw new IllegalArgumentException("관리자 권한이 필요합니다.");
         }
@@ -118,58 +123,63 @@ public class WebApi {
     }
 
     @PutMapping("/my/webhook")
-    Object updateWebhook(@RequestBody WebhookRequest req, HttpSession session) {
-        UserProfile user = requireUser(session);
+    Object updateWebhook(@RequestBody WebhookRequest req, HttpServletRequest request) {
+        UserProfile user = requireUser(request);
         ReceiptStore.User updated = store.updateWebhook(user.id(), req.webhookUrl());
         UserProfile newProfile = new UserProfile(updated.id(), updated.username(), updated.membershipCode(), updated.discordWebhookUrl(), updated.role());
-        session.setAttribute("auth_user", newProfile);
+        request.getSession().setAttribute("auth_user", newProfile);
         return Map.of("ok", true, "user", newProfile);
     }
 
     @DeleteMapping("/my/webhook")
-    Object deleteWebhook(HttpSession session) {
-        UserProfile user = requireUser(session);
+    Object deleteWebhook(HttpServletRequest request) {
+        UserProfile user = requireUser(request);
         ReceiptStore.User updated = store.updateWebhook(user.id(), "");
         UserProfile newProfile = new UserProfile(updated.id(), updated.username(), updated.membershipCode(), updated.discordWebhookUrl(), updated.role());
-        session.setAttribute("auth_user", newProfile);
+        request.getSession().setAttribute("auth_user", newProfile);
         return Map.of("ok", true, "user", newProfile);
     }
 
     @PostMapping("/my/webhook/test")
-    Object testWebhook(@RequestBody(required = false) WebhookRequest req, HttpSession session) {
-        UserProfile user = requireUser(session);
+    Object testWebhook(@RequestBody(required = false) WebhookRequest req, HttpServletRequest request) {
+        UserProfile user = requireUser(request);
         String url = (req != null && req.webhookUrl() != null && !req.webhookUrl().isBlank())
                 ? req.webhookUrl().trim()
                 : user.discordWebhookUrl();
         if (url == null || url.isBlank()) {
             throw new IllegalArgumentException("디스코드 웹훅 URL을 먼저 입력해주세요.");
         }
+        // 서버가 임의 주소로 요청을 보내지 않도록(SSRF) 저장할 때와 같은 디스코드 웹훅 주소만 허용
+        if (!ReceiptStore.isDiscordWebhookUrl(url)) {
+            throw new IllegalArgumentException("올바른 디스코드 웹훅 URL을 입력해주세요.");
+        }
         discordService.sendTestNotification(url, user.username());
         return Map.of("ok", true, "message", "테스트 알림이 전송되었습니다. 디스코드 채널을 확인하세요!");
     }
 
     @PostMapping("/auth/logout")
-    Object logout(HttpSession session) {
+    Object logout(HttpServletRequest request) {
+        HttpSession session = request.getSession(false);
         if (session != null) session.invalidate();
         return Map.of("ok", true);
     }
 
     @GetMapping("/auth/me")
-    Object me(HttpSession session) {
-        UserProfile user = current(session);
+    Object me(HttpServletRequest req) {
+        UserProfile user = current(req);
         if (user == null) return Map.of("loggedIn", false);
         return Map.of("loggedIn", true, "user", user);
     }
 
     @GetMapping("/my/forms")
-    Object myForms(HttpSession session) {
-        UserProfile user = requireUser(session);
+    Object myForms(HttpServletRequest req) {
+        UserProfile user = requireUser(req);
         return Map.of("forms", store.myForms(user.id()));
     }
 
     @GetMapping("/my/submissions")
-    Object mySubmissions(HttpSession session) {
-        UserProfile user = requireUser(session);
+    Object mySubmissions(HttpServletRequest req) {
+        UserProfile user = requireUser(req);
         return Map.of("submissions", store.mySubmissions(user.id()));
     }
 
@@ -179,8 +189,8 @@ public class WebApi {
     }
 
     @PostMapping("/forms")
-    Object create(@RequestBody NewForm f, HttpSession session) {
-        UserProfile user = requireUser(session);
+    Object create(@RequestBody NewForm f, HttpServletRequest req) {
+        UserProfile user = requireUser(req);
         if (store.isAdminOnlyFormCreation() && !"ADMIN".equalsIgnoreCase(user.role())) {
             throw new IllegalArgumentException("현재 관리자만 폼림픽을 개설할 수 있습니다.");
         }
@@ -190,22 +200,22 @@ public class WebApi {
     }
 
     @DeleteMapping("/forms/{id}")
-    Object deleteForm(@PathVariable String id, HttpSession session) {
-        requireAdmin(session);
+    Object deleteForm(@PathVariable String id, HttpServletRequest req) {
+        requireAdmin(req);
         store.deleteForm(id);
         return Map.of("ok", true, "deletedFormId", id);
     }
 
     @PutMapping("/admin/settings/form-creation")
-    Object toggleFormCreation(@RequestBody AdminToggleRequest req, HttpSession session) {
-        requireAdmin(session);
+    Object toggleFormCreation(@RequestBody AdminToggleRequest req, HttpServletRequest request) {
+        requireAdmin(request);
         store.setAdminOnlyFormCreation(req.adminOnly());
         return Map.of("ok", true, "adminOnlyFormCreation", store.isAdminOnlyFormCreation());
     }
 
     @GetMapping("/admin/settings")
-    Object getAdminSettings(HttpSession session) {
-        requireAdmin(session);
+    Object getAdminSettings(HttpServletRequest req) {
+        requireAdmin(req);
         return Map.of("adminOnlyFormCreation", store.isAdminOnlyFormCreation());
     }
 
@@ -214,15 +224,15 @@ public class WebApi {
     }
 
     @PostMapping("/forms/{id}/ticket")
-    Object ticket(@PathVariable String id, HttpSession session) {
-        UserProfile user = requireUser(session);
+    Object ticket(@PathVariable String id, HttpServletRequest req) {
+        UserProfile user = requireUser(req);
         ReceiptStore.Ticket t = store.ticket(id, user.id());
         return Map.of("code", t.code());
     }
 
     @PostMapping("/forms/{id}/submissions")
-    Object submit(@PathVariable String id, @RequestBody Answer a, HttpSession session) {
-        UserProfile user = requireUser(session);
+    Object submit(@PathVariable String id, @RequestBody Answer a, HttpServletRequest req) {
+        UserProfile user = requireUser(req);
         ReceiptStore.Form form = store.form(id);
         if (form != null && form.hasDelay()) {
             long diffFromStart = System.currentTimeMillis() - form.startsAt().toEpochMilli();

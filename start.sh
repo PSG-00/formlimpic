@@ -54,6 +54,9 @@ if [ -z "$BYPASS_TOKEN" ] && [ -f "loadtest_bypass.token" ]; then
     BYPASS_TOKEN=$(tr -d '\r\n' < loadtest_bypass.token)
 fi
 
+# JVM 옵션: 힙 상한 명시 + OOM 시 반쯤 죽은 상태로 남지 않고 종료 (systemd 가 재시작)
+JAVA_OPTS="${FORMLIMPIC_JAVA_OPTS:--Xmx1g -XX:+ExitOnOutOfMemoryError}"
+
 # 5. 스프링 부트 서버 백그라운드 기동
 if command -v systemctl &> /dev/null && sudo -n true 2>/dev/null; then
     echo "🌱 [4/4] 스프링 부트를 systemd 서비스로 등록 및 백그라운드 기동 (러너 프로세스 트리 격리)..."
@@ -72,7 +75,7 @@ User=${CURRENT_USER}
 WorkingDirectory=${CURRENT_DIR}
 Environment="PATH=${PATH}"
 Environment="FORMLIMPIC_LOADTEST_BYPASS=${BYPASS_TOKEN}"
-ExecStart=/bin/bash -c 'exec "${JAVA_BIN}" -jar build/libs/formlimpic-0.0.1-SNAPSHOT.jar > app.log 2>&1'
+ExecStart=/bin/bash -c 'exec "${JAVA_BIN}" ${JAVA_OPTS} -jar build/libs/formlimpic-0.0.1-SNAPSHOT.jar > app.log 2>&1'
 Restart=always
 RestartSec=5
 
@@ -85,7 +88,7 @@ EOF
     sudo systemctl restart formlimpic
 else
     echo "🌱 [4/4] 스프링 부트 서버 백그라운드 기동..."
-    FORMLIMPIC_LOADTEST_BYPASS="$BYPASS_TOKEN" nohup java -jar build/libs/formlimpic-0.0.1-SNAPSHOT.jar > app.log 2>&1 &
+    FORMLIMPIC_LOADTEST_BYPASS="$BYPASS_TOKEN" nohup java ${JAVA_OPTS} -jar build/libs/formlimpic-0.0.1-SNAPSHOT.jar > app.log 2>&1 &
 fi
 
 # 6. 관리자 비밀번호 생성 대기 (최대 30초)

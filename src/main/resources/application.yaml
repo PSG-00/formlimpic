@@ -2,6 +2,11 @@ server:
   port: 8080
   # 같은 서버의 Caddy(127.0.0.1:8080)만 접근. 외부에서 8080 직접 접속 차단
   address: ${SERVER_ADDRESS:127.0.0.1}
+  servlet:
+    session:
+      # 정상 종료(systemctl stop/restart) 시 세션을 파일로 저장했다가 기동 시 복원 → 배포해도 로그인 유지
+      persistent: true
+      store-dir: ${SESSION_STORE_DIR:./data/sessions}
   tomcat:
     threads:
       max: 200

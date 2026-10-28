@@ -49,6 +49,21 @@ class RateLimitFilterTests {
     }
 
     @Test
+    void submissionsFromOneSharedIpAreNotBurstLimited() throws Exception {
+        // 30 people behind one CGNAT address submit in the same second
+        for (int i = 0; i < 30; i++) {
+            MockHttpServletRequest req = new MockHttpServletRequest("POST", "/api/forms/f1/submissions");
+            req.setRemoteAddr("192.168.1.106");
+            MockHttpServletResponse res = new MockHttpServletResponse();
+            filter.doFilter(req, res, new MockFilterChain());
+            assertEquals(200, res.getStatus());
+        }
+
+        // Other endpoints from that IP are still burst limited
+        assertEquals(429, sixteenthStatus(filter, "192.168.1.106", ""));
+    }
+
+    @Test
     void triggers1HourBanWhenExceeding600RequestsPerMinute() throws Exception {
         String testIp = "192.168.1.102";
 

@@ -60,7 +60,7 @@ public final class ReceiptStore implements AutoCloseable {
     private final BlockingQueue<Event> journalQueue = new LinkedBlockingQueue<>();
     private final Thread flusherThread;
     private volatile boolean running = true;
-    private boolean failed;
+    private volatile boolean failed; // set by journal-flusher, read by request threads
 
     public ReceiptStore(Path path, Clock clock) throws IOException {
         this.clock = clock;
@@ -387,11 +387,14 @@ public final class ReceiptStore implements AutoCloseable {
         User old = usersById.get(userId);
         if (old == null) throw new IllegalArgumentException("사용자를 찾을 수 없습니다.");
         String cleaned = webhookUrl != null ? webhookUrl.trim() : "";
-        if (!cleaned.isBlank() && !cleaned.startsWith("https://discord.com/api/webhooks/") && !cleaned.startsWith("https://discordapp.com/api/webhooks/")) {
+        if (!cleaned.isBlank() && !isDiscordWebhookUrl(cleaned)) {
             throw new IllegalArgumentException("올바른 디스코드 웹훅 URL을 입력해주세요.");
         }
         append(props("type", "user_webhook", "id", UUID.randomUUID().toString(), "userId", userId, "webhook", cleaned));
         return usersById.get(userId);
+    }
+    public static boolean isDiscordWebhookUrl(String url) {
+        return url != null && (url.startsWith("https://discord.com/api/webhooks/") || url.startsWith("https://discordapp.com/api/webhooks/"));
     }
     public synchronized List<Form> unnotifiedExpiredForms() {
         Instant current = now();

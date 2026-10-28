@@ -143,6 +143,48 @@ class WebApiAuthTests {
     }
 
     @Test
+    void anonymousReadsDoNotCreateSessions() throws Exception {
+        ReceiptStore store = new ReceiptStore(dir.resolve("session_journal"), Clock.systemUTC());
+        WebApi api = new WebApi(store, new BCryptPasswordEncoder(), new DiscordWebhookService(store));
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(api).build();
+
+        var me = mockMvc.perform(get("/api/auth/me"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.loggedIn").value(false))
+                .andReturn();
+        assertNull(me.getRequest().getSession(false));
+
+        var mine = mockMvc.perform(get("/api/my/forms"))
+                .andExpect(status().isBadRequest())
+                .andReturn();
+        assertNull(mine.getRequest().getSession(false));
+    }
+
+    @Test
+    void webhookTestRejectsNonDiscordUrls() throws Exception {
+        ReceiptStore store = new ReceiptStore(dir.resolve("ssrf_journal"), Clock.systemUTC());
+        WebApi api = new WebApi(store, new BCryptPasswordEncoder(), new DiscordWebhookService(store));
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(api).build();
+        MockHttpSession session = new MockHttpSession();
+        mockMvc.perform(post("/api/auth/signup")
+                        .session(session)
+                        .header("X-Formlimpic", "formlimpic")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"ssrf_user\",\"password\":\"secret123\"}"))
+                .andExpect(status().isOk());
+
+        for (String url : new String[]{"http://169.254.169.254/computeMetadata/v1/", "http://127.0.0.1:5432/", "https://discord.com.evil.example/api/webhooks/1/x"}) {
+            mockMvc.perform(post("/api/my/webhook/test")
+                            .session(session)
+                            .header("X-Formlimpic", "formlimpic")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"webhookUrl\":\"" + url + "\"}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.message").value("올바른 디스코드 웹훅 URL을 입력해주세요."));
+        }
+    }
+
+    @Test
     void adminFeaturesRoleToggleAndDelete() throws Exception {
         ReceiptStore store = new ReceiptStore(dir.resolve("admin_journal"), Clock.systemUTC());
         BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();

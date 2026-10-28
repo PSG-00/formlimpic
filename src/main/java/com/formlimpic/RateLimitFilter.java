@@ -13,6 +13,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * 429 Too Many Requests Multi-tier Rate Limiter
  * 1. Second Window : Blocks bursts exceeding 15 req/sec (temporary 1-second pause).
+ *    Form submissions are exempt so many people behind one public IP (carrier CGNAT, PC방) can submit at the same instant.
  * 2. Minute Window : Detects persistent bots exceeding 600 req/min and bans IP for 1 hour (hard ban).
  * Keeps normal participants fast while protecting GCP resources and egress bandwidth.
  */
@@ -112,22 +113,24 @@ public class RateLimitFilter implements Filter {
             return;
         }
 
-        // Tier 3: Check burst clicks per second (Max 15 req/sec)
+        // Tier 3: Check burst clicks per second (Max 15 req/sec), except form submissions
         long nowSec = now / 1000L;
-        SecondCounter secCounter = secondCounters.compute(clientIp, (ip, existing) -> {
-            if (existing == null || existing.timestampSec != nowSec) {
-                return new SecondCounter(nowSec);
-            }
-            existing.count.incrementAndGet();
-            return existing;
-        });
+        if (!isSubmission(req)) {
+            SecondCounter secCounter = secondCounters.compute(clientIp, (ip, existing) -> {
+                if (existing == null || existing.timestampSec != nowSec) {
+                    return new SecondCounter(nowSec);
+                }
+                existing.count.incrementAndGet();
+                return existing;
+            });
 
-        if (secCounter.count.get() > MAX_REQUESTS_PER_SECOND) {
-            res.setStatus(429);
-            res.setHeader("Retry-After", "1");
-            res.setContentType("application/json;charset=UTF-8");
-            res.getWriter().write("{\"message\":\"요청이 너무 많습니다. 잠시 후 다시 시도해주세요.\"}");
-            return;
+            if (secCounter.count.get() > MAX_REQUESTS_PER_SECOND) {
+                res.setStatus(429);
+                res.setHeader("Retry-After", "1");
+                res.setContentType("application/json;charset=UTF-8");
+                res.getWriter().write("{\"message\":\"요청이 너무 많습니다. 잠시 후 다시 시도해주세요.\"}");
+                return;
+            }
         }
 
         // Periodic cleanup for stale entries
@@ -170,6 +173,11 @@ public class RateLimitFilter implements Filter {
         }
 
         return remoteAddr;
+    }
+
+    private static boolean isSubmission(HttpServletRequest req) {
+        String uri = req.getRequestURI();
+        return "POST".equals(req.getMethod()) && uri.startsWith("/api/forms/") && uri.endsWith("/submissions");
     }
 
     private static boolean isLoopback(String addr) {
