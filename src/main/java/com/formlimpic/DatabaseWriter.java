@@ -1,11 +1,14 @@
 package com.formlimpic;
 
 import org.slf4j.*;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.*;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
+import java.io.IOException;
+import java.util.List;
 import java.util.Properties;
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -18,7 +21,9 @@ public class DatabaseWriter {
     private final ReceiptStore store;
     private final JdbcTemplate jdbc;
     private final TransactionTemplate tx;
-    private long cursor;
+    private static final int BATCH = 1000;
+    private static final long MAX_FLUSH_MS = 5000;
+    private Long cursor; // last projected journal sequence; loaded from projection_state
     private boolean initialized;
     private boolean outage;
     DatabaseWriter(ReceiptStore store, JdbcTemplate jdbc, PlatformTransactionManager manager) { this.store = store; this.jdbc = jdbc; this.tx = new TransactionTemplate(manager); }
@@ -40,13 +45,55 @@ public class DatabaseWriter {
                 jdbc.execute("ALTER TABLE submissions ADD COLUMN IF NOT EXISTS birth_date TEXT");
                 jdbc.execute("ALTER TABLE submissions ADD COLUMN IF NOT EXISTS bubble TEXT");
                 jdbc.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+                jdbc.execute("CREATE TABLE IF NOT EXISTS projection_state (id INT PRIMARY KEY, sequence BIGINT NOT NULL)");
+                jdbc.execute("CREATE TABLE IF NOT EXISTS projection_failures (sequence BIGINT PRIMARY KEY, type TEXT, error TEXT, failed_at TIMESTAMPTZ NOT NULL DEFAULT now())");
                 initialized = true;
             }
-            for (ReceiptStore.Event event : store.eventsAfter(cursor)) {
-                tx.executeWithoutResult(status -> save(event)); cursor = event.sequence();
+            if (cursor == null) cursor = loadCursor();
+            // Catch up in batches (one transaction each) instead of 100 events per second
+            long deadline = System.currentTimeMillis() + MAX_FLUSH_MS;
+            while (System.currentTimeMillis() < deadline) {
+                List<ReceiptStore.Event> batch = store.durableEventsAfter(cursor, BATCH);
+                if (batch.isEmpty()) break;
+                saveBatch(batch);
+                cursor = batch.get(batch.size() - 1).sequence();
             }
             if (outage) log.info("PostgreSQL projection resumed; durable journal retained"); outage = false;
-        } catch (RuntimeException e) { if (!outage) log.warn("PostgreSQL unavailable; acknowledged receipts remain in journal and will be retried: {}", e.getClass().getSimpleName()); outage = true; }
+        } catch (RuntimeException | IOException e) { cursor = null; if (!outage) log.warn("PostgreSQL unavailable; acknowledged receipts remain in journal and will be retried: {}", e.getClass().getSimpleName()); outage = true; }
+    }
+    private long loadCursor() {
+        List<Long> rows = jdbc.queryForList("SELECT sequence FROM projection_state WHERE id = 1", Long.class);
+        long saved = rows.isEmpty() || rows.get(0) == null ? 0 : rows.get(0);
+        long journal = store.durableSequence();
+        if (saved > journal) {
+            log.warn("Projection cursor {} is ahead of the journal ({} events): journal was restored or repaired; continuing from {}", saved, journal, journal);
+            return journal;
+        }
+        return saved;
+    }
+    private void storeCursor(long sequence) {
+        jdbc.update("INSERT INTO projection_state (id, sequence) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET sequence = EXCLUDED.sequence", sequence);
+    }
+    private void saveBatch(List<ReceiptStore.Event> batch) {
+        long last = batch.get(batch.size() - 1).sequence();
+        try {
+            tx.executeWithoutResult(status -> { for (ReceiptStore.Event e : batch) save(e); storeCursor(last); });
+        } catch (DataIntegrityViolationException bad) {
+            // One event the DB rejects must not stop the projection: retry one by one and set rejected ones aside.
+            // Connection errors are not DataIntegrityViolationException, so an outage still stops and retries later.
+            for (ReceiptStore.Event e : batch) {
+                try {
+                    tx.executeWithoutResult(status -> { save(e); storeCursor(e.sequence()); });
+                } catch (DataIntegrityViolationException rejected) {
+                    log.warn("Projection skipped journal event {} ({}): {}", e.sequence(), e.values().getProperty("type"), rejected.getMostSpecificCause().getMessage());
+                    tx.executeWithoutResult(status -> {
+                        jdbc.update("INSERT INTO projection_failures (sequence, type, error) VALUES (?, ?, ?) ON CONFLICT (sequence) DO NOTHING",
+                                e.sequence(), e.values().getProperty("type"), String.valueOf(rejected.getMostSpecificCause().getMessage()));
+                        storeCursor(e.sequence());
+                    });
+                }
+            }
+        }
     }
     private void save(ReceiptStore.Event e) {
         Properties p = e.values();

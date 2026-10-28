@@ -55,7 +55,9 @@ public final class ReceiptStore implements AutoCloseable {
     private final FileLock lock;
     private final Clock clock;
     private final SecureRandom random = new SecureRandom();
-    private final List<Event> events = new ArrayList<>();
+    // Events are not kept in memory: only their frame offsets, so the DB projection can re-read them from the journal
+    private long eventCount;
+    private long[] offsets = new long[1024]; // offsets[i] = file position of event i + 1 (guarded by channel)
     private final Map<String, User> usersById = new HashMap<>();
     private final Map<String, User> usersByUsername = new HashMap<>();
     private final Map<String, User> usersByMembershipCode = new HashMap<>();
@@ -95,7 +97,7 @@ public final class ReceiptStore implements AutoCloseable {
         lock = channel.tryLock();
         if (lock == null) { channel.close(); throw new IOException("Journal already in use"); }
         try { recover(); } catch (Exception e) { close(); throw e; }
-        appendedSequence = durableSequence = events.size();
+        appendedSequence = durableSequence = eventCount;
         flusherThread = new Thread(this::flusherLoop, "journal-flusher");
         flusherThread.setDaemon(true);
         flusherThread.start();
@@ -113,28 +115,52 @@ public final class ReceiptStore implements AutoCloseable {
             CRC32 crc = new CRC32(); crc.update(body.array());
             if ((int) crc.getValue() != checksum) { corrupt = "Journal checksum mismatch"; break; }
             Properties p = new Properties(); p.load(new ByteArrayInputStream(body.array()));
-            Event event = new Event(events.size() + 1L, p); apply(event); events.add(event);
+            addOffset(good); Event event = new Event(eventCount + 1L, p); apply(event); eventCount++;
             good = channel.position();
         }
         if (corrupt != null) {
-            if (!repairTail) throw new IOException(corrupt + " at byte " + good + "; restore from backup, or start once with JOURNAL_REPAIR_TAIL=true to keep the " + events.size() + " events before it");
+            if (!repairTail) throw new IOException(corrupt + " at byte " + good + "; restore from backup, or start once with JOURNAL_REPAIR_TAIL=true to keep the " + eventCount + " events before it");
             Path backup = path.resolveSibling(path.getFileName() + ".corrupt-" + System.currentTimeMillis());
             try (FileChannel copy = FileChannel.open(backup, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
                 channel.transferTo(0, channel.size(), copy);
                 copy.force(true);
             }
-            System.err.printf("[journal] %s at byte %d: kept %d events, dropped %d bytes, original saved to %s%n", corrupt, good, events.size(), channel.size() - good, backup);
+            System.err.printf("[journal] %s at byte %d: kept %d events, dropped %d bytes, original saved to %s%n", corrupt, good, eventCount, channel.size() - good, backup);
         }
         channel.truncate(good); channel.position(good); channel.force(true);
     }
     private void readFully(ByteBuffer b) throws IOException { while (b.hasRemaining()) if (channel.read(b) < 0) throw new EOFException(); }
+    private void readAt(ByteBuffer b, long position) throws IOException {
+        while (b.hasRemaining()) if (channel.read(b, position + b.position()) < 0) throw new EOFException();
+    }
+    private void addOffset(long position) { // recovery, then the flusher under the channel lock
+        if (eventCountOnDisk == offsets.length) offsets = Arrays.copyOf(offsets, offsets.length * 2);
+        offsets[eventCountOnDisk++] = position;
+    }
+    private int eventCountOnDisk;
     private void append(Properties p) {
         if (failed) throw new IllegalStateException(FAILED_MESSAGE);
-        Event event = new Event(events.size() + 1L, p);
+        Event event = new Event(++eventCount, p);
         apply(event);
-        events.add(event);
         journalQueue.offer(event);
         appendedSequence = event.sequence();
+    }
+    public long durableSequence() { return durableSequence; }
+    /** Durable events after the given sequence, re-read from the journal (for the DB projection). */
+    public List<Event> durableEventsAfter(long sequence, int limit) throws IOException {
+        long upTo = Math.min(durableSequence, sequence + limit);
+        if (upTo <= sequence) return List.of();
+        long[] positions;
+        synchronized (channel) { positions = Arrays.copyOfRange(offsets, (int) sequence, (int) upTo); }
+        // Positional reads do not move the channel position, so they run alongside the flusher's appends
+        List<Event> out = new ArrayList<>(positions.length);
+        for (int i = 0; i < positions.length; i++) {
+            ByteBuffer header = ByteBuffer.allocate(8); readAt(header, positions[i]); header.flip();
+            ByteBuffer body = ByteBuffer.allocate(header.getInt()); readAt(body, positions[i] + 8);
+            Properties p = new Properties(); p.load(new ByteArrayInputStream(body.array()));
+            out.add(new Event(sequence + i + 1, p));
+        }
+        return out;
     }
     /**
      * Runs a write under the store lock, then waits outside it until the journal is forced to disk, so a
@@ -225,6 +251,7 @@ public final class ReceiptStore implements AutoCloseable {
                             .putInt((int) crc.getValue())
                             .put(bytes);
                     frame.flip();
+                    addOffset(channel.position());
                     while (frame.hasRemaining()) channel.write(frame);
                 }
                 channel.force(true);
@@ -311,13 +338,19 @@ public final class ReceiptStore implements AutoCloseable {
                 }
             }
             case "ticket" -> {
-                Ticket t = new Ticket(id, p.getProperty("form"), p.getProperty("owner"), p.getProperty("code"));
+                // Reuse the form/user strings already in memory instead of one parsed copy per ticket
+                Form f = forms.get(p.getProperty("form"));
+                User u = usersById.get(p.getProperty("owner"));
+                String code = p.getProperty("code");
+                Ticket t = new Ticket(id, f != null ? f.id() : p.getProperty("form"), u != null ? u.id() : p.getProperty("owner"),
+                        u != null && code.equals(u.membershipCode()) ? u.membershipCode() : code);
                 tickets.put(id, t);
                 ticketsByFormAndOwner.put(t.formId() + "\0" + t.owner(), t);
                 ticketsByOwner.computeIfAbsent(t.owner(), k -> new ArrayList<>()).add(t);
             }
             case "receipt" -> {
-                Receipt r = new Receipt(id, p.getProperty("form"), p.getProperty("ticket"), p.getProperty("name"), p.getProperty("birthDate", ""), p.getProperty("phone"), p.getProperty("bubble", ""), p.getProperty("code"), Instant.parse(p.getProperty("time")), e.sequence(), Boolean.parseBoolean(p.getProperty("early")));
+                Ticket t = tickets.get(p.getProperty("ticket"));
+                Receipt r = new Receipt(id, t != null ? t.formId() : p.getProperty("form"), t != null ? t.id() : p.getProperty("ticket"), p.getProperty("name"), p.getProperty("birthDate", ""), p.getProperty("phone"), p.getProperty("bubble", ""), t != null ? t.code() : p.getProperty("code"), Instant.parse(p.getProperty("time")), e.sequence(), Boolean.parseBoolean(p.getProperty("early")));
                 receipts.put(r.ticketId(), r);
                 receiptsByForm.computeIfAbsent(r.formId(), k -> new ArrayList<>()).add(r);
             }
@@ -530,7 +563,6 @@ public final class ReceiptStore implements AutoCloseable {
     public synchronized Optional<Ticket> ticketById(String ticketId) {
         return Optional.ofNullable(tickets.get(ticketId));
     }
-    public synchronized List<Event> eventsAfter(long sequence) { return events.stream().filter(e -> e.sequence() > sequence).limit(100).toList(); }
     private static String text(String value, int max) { if (value == null || value.isBlank() || value.length() > max) throw new IllegalArgumentException("필수 항목과 입력 길이를 확인하세요."); return value.trim(); }
     private static String optionalText(String value, int max) { if (value == null || value.isBlank()) return ""; if (value.length() > max) throw new IllegalArgumentException("입력 길이를 확인하세요."); return value.trim(); }
     @Override

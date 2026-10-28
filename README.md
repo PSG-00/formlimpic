@@ -569,4 +569,9 @@ k6 run -e BYPASS_TOKEN=my-local-token loadtest.js
     1. Caddyfile의 `reverse_proxy 127.0.0.1:8080 { ... }` 안에 `header_up X-Arrived-At {time.now.unix_ms}` 추가 후 `sudo systemctl reload caddy`
     2. 프로젝트 폴더의 `formlimpic.env`에 `FORMLIMPIC_TRUST_PROXY_ARRIVAL=true` 추가 후 `sudo systemctl restart formlimpic`
   - 1 없이 2만 켜면 클라이언트가 헤더를 위조해 도착 시각을 앞당길 수 있습니다. (헤더는 루프백(Caddy)에서 온 요청만, 현재 시각 기준 -30초~+1초 범위만 신뢰)
+- **저널과 DB 반영**:
+  - 원천 데이터는 `data/receipts.log` 저널입니다. 모든 쓰기는 fsync 후에 응답하고, 디스크 장애 시에는 503으로 거절합니다.
+  - PostgreSQL은 저널을 1,000건 단위 트랜잭션으로 따라가는 사본이며, 진행 위치는 `projection_state`, DB가 거부한 이벤트는 `projection_failures`에 남습니다.
+  - 저널이 깨져 기동이 안 되면 `formlimpic.env`에 `JOURNAL_REPAIR_TAIL=true`를 넣고 한 번 재시작합니다(원본은 `receipts.log.corrupt-<시각>`으로 보관). 복구 후 이 줄은 지웁니다.
+  - 저널과 DB 볼륨은 같은 VM 디스크에 있으므로, 디스크 스냅샷 일정이나 저널 외부 백업을 따로 걸어둡니다.
 

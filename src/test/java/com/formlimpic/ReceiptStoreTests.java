@@ -118,6 +118,24 @@ class ReceiptStoreTests {
         }
         try (ReceiptStore reopened = new ReceiptStore(p, clock)) { assertEquals(1, reopened.forms().size()); }
     }
+    @Test void durableEventsAreReReadFromTheJournal() throws Exception {
+        TestClock clock = new TestClock(); Path p = dir.resolve("reread_journal");
+        try (ReceiptStore s = new ReceiptStore(p, clock)) {
+            s.registerUser("reader", "hash");
+            s.create("one", "c", clock.value.plusSeconds(60), clock.value.plusSeconds(120));
+            s.create("two", "c", clock.value.plusSeconds(60), clock.value.plusSeconds(120));
+            assertEquals(3, s.durableSequence());
+            var events = s.durableEventsAfter(1, 1000);
+            assertEquals(List.of(2L, 3L), events.stream().map(ReceiptStore.Event::sequence).toList());
+            assertEquals(List.of("one", "two"), events.stream().map(e -> e.values().getProperty("title")).toList());
+            assertEquals(1, s.durableEventsAfter(0, 1).size(), "limit");
+            assertTrue(s.durableEventsAfter(3, 1000).isEmpty());
+        }
+        try (ReceiptStore restored = new ReceiptStore(p, clock)) {
+            restored.create("three", "c", clock.value.plusSeconds(60), clock.value.plusSeconds(120));
+            assertEquals(List.of("two", "three"), restored.durableEventsAfter(2, 1000).stream().map(e -> e.values().getProperty("title")).toList());
+        }
+    }
     @Test void concurrentCodesAndReceiptsAreUnique() throws Exception {
         TestClock clock = new TestClock();
         try (ReceiptStore s = new ReceiptStore(dir.resolve("journal"), clock)) {
