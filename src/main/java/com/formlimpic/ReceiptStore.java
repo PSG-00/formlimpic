@@ -41,6 +41,14 @@ public final class ReceiptStore implements AutoCloseable {
         }
     }
     public record SubmissionSummary(Form form, Ticket ticket, Receipt receipt, int rank) {}
+    /** Final ranking of a form: receipts in rank order and 1-based rank by ticket id. Immutable. */
+    public record Ranking(List<Receipt> receipts, Map<String, Integer> rankByTicket) {}
+    /**
+     * Results are final once no in-flight submission can still be admitted. A request that arrived before expiry
+     * may be processed a little later under load, so submissions are accepted until expiry + this grace and
+     * results open after it.
+     */
+    static final Duration RESULTS_FINALIZE_DELAY = Duration.ofSeconds(3);
     public record Event(long sequence, Properties values) {}
     private final FileChannel channel;
     private final FileLock lock;
@@ -55,6 +63,9 @@ public final class ReceiptStore implements AutoCloseable {
     private final Map<String, Ticket> tickets = new HashMap<>();
     private final Map<String, Ticket> ticketsByFormAndOwner = new HashMap<>();
     private final Map<String, Receipt> receipts = new HashMap<>();
+    private final Map<String, List<Receipt>> receiptsByForm = new HashMap<>();
+    private final Map<String, List<Ticket>> ticketsByOwner = new HashMap<>();
+    private final ConcurrentHashMap<String, Ranking> rankings = new ConcurrentHashMap<>();
     private volatile boolean adminOnlyFormCreation = false;
     private static final Event POISON_PILL = new Event(-1L, new Properties());
     private final BlockingQueue<Event> journalQueue = new LinkedBlockingQueue<>();
@@ -215,6 +226,8 @@ public final class ReceiptStore implements AutoCloseable {
             case "form_deleted" -> {
                 forms.remove(id);
                 notifiedFormIds.remove(id);
+                receiptsByForm.remove(id);
+                rankings.remove(id);
                 List<String> toRemove = new ArrayList<>();
                 for (Ticket t : tickets.values()) {
                     if (t.formId().equals(id)) {
@@ -225,6 +238,8 @@ public final class ReceiptStore implements AutoCloseable {
                     Ticket t = tickets.remove(tid);
                     if (t != null) {
                         ticketsByFormAndOwner.remove(t.formId() + "\0" + t.owner());
+                        List<Ticket> owned = ticketsByOwner.get(t.owner());
+                        if (owned != null) owned.remove(t);
                     }
                     receipts.remove(tid);
                 }
@@ -238,8 +253,13 @@ public final class ReceiptStore implements AutoCloseable {
                 Ticket t = new Ticket(id, p.getProperty("form"), p.getProperty("owner"), p.getProperty("code"));
                 tickets.put(id, t);
                 ticketsByFormAndOwner.put(t.formId() + "\0" + t.owner(), t);
+                ticketsByOwner.computeIfAbsent(t.owner(), k -> new ArrayList<>()).add(t);
             }
-            case "receipt" -> receipts.put(p.getProperty("ticket"), new Receipt(id, p.getProperty("form"), p.getProperty("ticket"), p.getProperty("name"), p.getProperty("birthDate", ""), p.getProperty("phone"), p.getProperty("bubble", ""), p.getProperty("code"), Instant.parse(p.getProperty("time")), e.sequence(), Boolean.parseBoolean(p.getProperty("early"))));
+            case "receipt" -> {
+                Receipt r = new Receipt(id, p.getProperty("form"), p.getProperty("ticket"), p.getProperty("name"), p.getProperty("birthDate", ""), p.getProperty("phone"), p.getProperty("bubble", ""), p.getProperty("code"), Instant.parse(p.getProperty("time")), e.sequence(), Boolean.parseBoolean(p.getProperty("early")));
+                receipts.put(r.ticketId(), r);
+                receiptsByForm.computeIfAbsent(r.formId(), k -> new ArrayList<>()).add(r);
+            }
             default -> throw new IllegalStateException("Unknown journal event");
         }
     }
@@ -350,15 +370,34 @@ public final class ReceiptStore implements AutoCloseable {
         phone = text(phone, 30);
         bubble = optionalText(bubble, 50);
         Form f = form(formId);
+        // Too late to be processed even if it arrived in time: results may already be published
+        if (!now().isBefore(resultsAt(f))) throw new IllegalArgumentException("신청이 마감되었습니다.");
         open(f, time);
         append(props("type", "receipt", "id", UUID.randomUUID().toString(), "form", formId, "ticket", t.id(), "name", name, "birthDate", birthDate, "phone", phone, "bubble", bubble, "code", t.code(), "time", time.toString(), "early", Boolean.toString(time.isBefore(f.startsAt()))));
         return receipts.get(t.id());
     }
-    public synchronized List<Receipt> results(String formId) {
-        if (now().isBefore(form(formId).expiresAt())) throw new IllegalArgumentException("만료 후 결과가 공개됩니다.");
-        // Admission time first (arrival + simulated delay), journal sequence breaks exact ties.
-        // Older receipts were stamped under the same lock as their sequence, so their order is unchanged.
-        return receipts.values().stream().filter(r -> r.formId().equals(formId)).sorted(Comparator.comparing(Receipt::early).thenComparing(Receipt::receivedAt).thenComparingLong(Receipt::sequence)).toList();
+    public static Instant resultsAt(Form f) { return f.expiresAt().plus(RESULTS_FINALIZE_DELAY); }
+    public List<Receipt> results(String formId) { return ranking(formId).receipts(); }
+    /** Computed once per form after resultsAt (nothing can be admitted any more), then served without the store lock. */
+    public Ranking ranking(String formId) {
+        Ranking cached = rankings.get(formId);
+        if (cached != null) return cached;
+        synchronized (this) {
+            Form f = form(formId);
+            Instant current = now();
+            if (current.isBefore(f.expiresAt())) throw new IllegalArgumentException("만료 후 결과가 공개됩니다.");
+            if (current.isBefore(resultsAt(f))) throw new IllegalArgumentException("결과를 집계하고 있습니다. 잠시 후 다시 확인하세요.");
+            return rankings.computeIfAbsent(formId, id -> {
+                // Admission time first (arrival + simulated delay), journal sequence breaks exact ties.
+                // Older receipts were stamped under the same lock as their sequence, so their order is unchanged.
+                List<Receipt> ordered = receiptsByForm.getOrDefault(id, List.of()).stream()
+                        .sorted(Comparator.comparing(Receipt::early).thenComparing(Receipt::receivedAt).thenComparingLong(Receipt::sequence))
+                        .toList();
+                Map<String, Integer> rankByTicket = new HashMap<>();
+                for (int i = 0; i < ordered.size(); i++) rankByTicket.put(ordered.get(i).ticketId(), i + 1);
+                return new Ranking(ordered, Map.copyOf(rankByTicket));
+            });
+        }
     }
     public synchronized List<Form> myForms(String owner) {
         if (owner == null || owner.isBlank()) return List.of();
@@ -370,20 +409,15 @@ public final class ReceiptStore implements AutoCloseable {
     public synchronized List<SubmissionSummary> mySubmissions(String owner) {
         if (owner == null || owner.isBlank()) return List.of();
         List<SubmissionSummary> list = new ArrayList<>();
-        for (Ticket t : tickets.values()) {
-            if (owner.equals(t.owner())) {
-                Receipt r = receipts.get(t.id());
-                if (r != null) {
-                    Form f = forms.get(t.formId());
-                    int rank = 0;
-                    if (f != null && !now().isBefore(f.expiresAt())) {
-                        List<Receipt> res = results(f.id());
-                        for (int i = 0; i < res.size(); i++) {
-                            if (res.get(i).ticketId().equals(t.id())) { rank = i + 1; break; }
-                        }
-                    }
-                    list.add(new SubmissionSummary(f, t, r, rank));
+        for (Ticket t : ticketsByOwner.getOrDefault(owner, List.of())) {
+            Receipt r = receipts.get(t.id());
+            if (r != null) {
+                Form f = forms.get(t.formId());
+                int rank = 0;
+                if (f != null && !now().isBefore(resultsAt(f))) {
+                    rank = ranking(f.id()).rankByTicket().getOrDefault(t.id(), 0);
                 }
+                list.add(new SubmissionSummary(f, t, r, rank));
             }
         }
         list.sort((a, b) -> b.receipt().receivedAt().compareTo(a.receipt().receivedAt()));
@@ -406,7 +440,7 @@ public final class ReceiptStore implements AutoCloseable {
         Instant current = now();
         List<Form> list = new ArrayList<>();
         for (Form f : forms.values()) {
-            if (!current.isBefore(f.expiresAt()) && !notifiedFormIds.contains(f.id())) {
+            if (!current.isBefore(resultsAt(f)) && !notifiedFormIds.contains(f.id())) {
                 list.add(f);
             }
         }

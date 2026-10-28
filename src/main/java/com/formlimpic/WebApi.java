@@ -53,6 +53,7 @@ public class WebApi {
         }
     }
     record Row(int rank, String name, String membershipCode, Instant receivedAt, boolean early) {}
+    record RankingPage(int total, int offset, List<Row> rows, Row mine) {}
     record AuthRequest(String username, String password) {}
     record WebhookRequest(String webhookUrl) {}
     record UserProfile(String id, String username, String membershipCode, String discordWebhookUrl, String role) implements java.io.Serializable {
@@ -230,7 +231,10 @@ public class WebApi {
     }
 
     @GetMapping("/forms/{id}") Object detail(@PathVariable String id, HttpServletRequest req, HttpServletResponse res) {
-        Map<String, Object> data = new HashMap<>(); data.put("form", store.form(id)); data.put("serverTime", store.now()); data.put("mine", store.mine(id, owner(req, res))); return data;
+        ReceiptStore.Form form = store.form(id);
+        Map<String, Object> data = new HashMap<>(); data.put("form", form); data.put("serverTime", store.now()); data.put("mine", store.mine(id, owner(req, res)));
+        data.put("resultsAt", ReceiptStore.resultsAt(form));
+        return data;
     }
 
     @PostMapping("/forms/{id}/ticket")
@@ -313,12 +317,33 @@ public class WebApi {
         return str.substring(0, front) + "***" + str.substring(len - back);
     }
 
+    private static Row row(int rank, ReceiptStore.Receipt r) {
+        return new Row(rank, maskName(r.name()), r.code(), r.receivedAt(), r.early());
+    }
+
+    /** Full list (kept for pages that still run the previous app.js). */
     @GetMapping("/forms/{id}/results") Object results(@PathVariable String id) {
-        List<Row> rows = new ArrayList<>();
-        for (ReceiptStore.Receipt r : store.results(id)) {
-            rows.add(new Row(rows.size() + 1, maskName(r.name()), r.code(), r.receivedAt(), r.early()));
-        }
+        List<ReceiptStore.Receipt> ranked = store.results(id);
+        List<Row> rows = new ArrayList<>(ranked.size());
+        for (ReceiptStore.Receipt r : ranked) rows.add(row(rows.size() + 1, r));
         return rows;
+    }
+
+    /** One page of the final ranking plus the caller's own row, so every open page does not pull all rows at once. */
+    @GetMapping("/forms/{id}/ranking")
+    Object ranking(@PathVariable String id, @RequestParam(defaultValue = "0") int offset, @RequestParam(defaultValue = "100") int limit, HttpServletRequest req) {
+        ReceiptStore.Ranking ranking = store.ranking(id);
+        List<ReceiptStore.Receipt> ranked = ranking.receipts();
+        int from = Math.max(0, Math.min(offset, ranked.size()));
+        int to = Math.min(ranked.size(), from + Math.max(1, Math.min(limit, 500)));
+        List<Row> rows = new ArrayList<>(to - from);
+        for (int i = from; i < to; i++) rows.add(row(i + 1, ranked.get(i)));
+        Row mine = null;
+        UserProfile user = current(req);
+        ReceiptStore.Receipt receipt = user != null ? store.mine(id, user.id()) : null;
+        Integer rank = receipt != null ? ranking.rankByTicket().get(receipt.ticketId()) : null;
+        if (rank != null) mine = row(rank, ranked.get(rank - 1));
+        return new RankingPage(ranked.size(), from, rows, mine);
     }
 
     @ExceptionHandler(IllegalArgumentException.class) ResponseEntity<?> bad(IllegalArgumentException e) { return ResponseEntity.badRequest().body(Map.of("message", e.getMessage())); }

@@ -534,7 +534,7 @@ async function renderMyPage(tab = 'submissions') {
             <dt>최종 결과</dt>
             <dd>
               ${isExpired
-                ? (s.rank > 0 ? `<span class="sub-rank">${s.rank}위</span>` : '집계 완료')
+                ? (s.rank > 0 ? `<span class="sub-rank">${s.rank}위</span>` : '결과 집계 중')
                 : '<span class="muted">마감 후 결과 공개</span>'}
             </dd>
           </dl>
@@ -739,43 +739,75 @@ async function renderDetail(id) {
     if (d.mine) showMine(d.mine);
     else location.hash = 'submit/' + id;
   };
+  const PAGE = 100;
+  const rowHtml = r => `
+    <tr>
+      <td>${r.rank}</td>
+      <td>${esc(maskName(r.name))}</td>
+      <td>${r.membershipCode}</td>
+      <td title="${esc(date(r.receivedAt))}">${time(r.receivedAt)}</td>
+      <td>${r.early ? '조기 제출' : '정상'}</td>
+    </tr>
+  `;
+  const renderResults = page => {
+    const el = document.querySelector('#results');
+    el.innerHTML = `
+      <h2 class="top-space">최종 순위</h2>
+      ${page.mine ? `<p>나의 순위: <span class="sub-rank">${page.mine.rank}위</span> / 총 ${page.total}명 (${time(page.mine.receivedAt)}, ${page.mine.early ? '조기 제출' : '정상'})</p>` : ''}
+      <p class="small">같은 밀리초의 신청은 서버 내부 접수 순번으로 구분합니다.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>순위</th><th>이름</th><th>멤버십 코드</th><th>접수 시각(KST)</th><th>구분</th></tr>
+          </thead>
+          <tbody>${page.rows.map(rowHtml).join('')}</tbody>
+        </table>
+      </div>
+      ${page.total ? '' : '<p>제출된 답변이 없습니다.</p>'}
+      ${page.rows.length < page.total ? `<button type="button" class="secondary top-space" id="more-results">더 보기 (${page.rows.length} / ${page.total})</button>` : ''}
+    `;
+    let shown = page.rows.length;
+    const more = el.querySelector('#more-results');
+    if (more) more.onclick = async () => {
+      more.disabled = true;
+      try {
+        const next = await api(`/forms/${id}/ranking?offset=${shown}&limit=${PAGE}`);
+        el.querySelector('tbody').insertAdjacentHTML('beforeend', next.rows.map(rowHtml).join(''));
+        shown += next.rows.length;
+        if (shown >= next.total) more.remove();
+        else more.textContent = `더 보기 (${shown} / ${next.total})`;
+      } catch (e) {
+        toast(e.message);
+      } finally {
+        more.disabled = false;
+      }
+    };
+  };
+
+  // 마감 순간 열려 있는 모든 페이지가 동시에 요청하지 않도록 집계 완료 시각 이후 0~2초 사이에 흩어서 조회
   let loaded = false;
+  let loading = false;
+  let nextTry = Date.parse(d.resultsAt || f.expiresAt) + Math.random() * 2000;
   const tick = async () => {
     if (!document.querySelector('#phase')) return;
     document.querySelector('#phase').textContent = phase(f);
     b.textContent = d.mine ? '나의 답변 확인하기' : (now() >= Date.parse(f.expiresAt) ? '신청 마감' : (!currentUser ? '로그인 후 폼 제출' : '폼 제출'));
     b.disabled = !d.mine && (now() < Date.parse(f.startsAt) - 600000 || now() >= Date.parse(f.expiresAt));
 
-    if (!loaded && now() >= Date.parse(f.expiresAt)) {
+    if (loaded || loading || now() < Date.parse(f.expiresAt)) return;
+    if (now() < nextTry) {
+      const el = document.querySelector('#results');
+      if (!el.innerHTML) el.innerHTML = '<h2 class="top-space">최종 순위</h2><p class="muted">결과를 집계하고 있습니다...</p>';
+      return;
+    }
+    loading = true;
+    try {
+      renderResults(await api(`/forms/${id}/ranking?offset=0&limit=${PAGE}`));
       loaded = true;
-      try {
-        const rows = await api('/forms/' + id + '/results');
-        document.querySelector('#results').innerHTML = `
-          <h2 class="top-space">최종 순위</h2>
-          <p class="small">같은 밀리초의 신청은 서버 내부 접수 순번으로 구분합니다.</p>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr><th>순위</th><th>이름</th><th>멤버십 코드</th><th>접수 시각(KST)</th><th>구분</th></tr>
-              </thead>
-              <tbody>
-                ${rows.map(r => `
-                  <tr>
-                    <td>${r.rank}</td>
-                    <td>${esc(maskName(r.name))}</td>
-                    <td>${r.membershipCode}</td>
-                    <td title="${esc(date(r.receivedAt))}">${time(r.receivedAt)}</td>
-                    <td>${r.early ? '조기 제출' : '정상'}</td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
-          ${rows.length ? '' : '<p>제출된 답변이 없습니다.</p>'}
-        `;
-      } catch (e) {
-        loaded = false;
-      }
+    } catch (e) {
+      nextTry = now() + 1000 + Math.random() * 2000; // 실패 시 200ms마다가 아니라 1~3초 뒤 재시도
+    } finally {
+      loading = false;
     }
   };
   tick();

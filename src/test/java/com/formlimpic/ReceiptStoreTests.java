@@ -29,6 +29,7 @@ class ReceiptStoreTests {
             assertThrows(IllegalArgumentException.class, () -> s.results(id));
             clock.value = f.expiresAt();
             assertThrows(IllegalArgumentException.class, () -> s.submit(id, "late", "fake", "TEST"));
+            clock.value = ReceiptStore.resultsAt(f);
             assertEquals(List.of(normal, early), s.results(id));
         }
         try (ReceiptStore restored = new ReceiptStore(path, clock)) {
@@ -51,12 +52,38 @@ class ReceiptStoreTests {
             var d = s.submit(id, "d", "D", "", "010", "", start.plusMillis(150));
             assertTrue(c.early()); assertFalse(b.early());
             assertThrows(IllegalArgumentException.class, () -> s.submit(id, "e", "E", "", "010", "", f.expiresAt()));
-            clock.value = f.expiresAt();
+            clock.value = ReceiptStore.resultsAt(f);
             expected = List.of(b, d, a, c); // equal admission time: earlier sequence wins; early submissions go last
             assertEquals(expected, s.results(id));
         }
         try (ReceiptStore restored = new ReceiptStore(path, clock)) {
             assertEquals(expected, restored.results(id));
+        }
+    }
+    @Test void resultsOpenAfterFinalizeDelayAndAreComputedOnce() throws Exception {
+        TestClock clock = new TestClock();
+        try (ReceiptStore s = new ReceiptStore(dir.resolve("finalize_journal"), clock)) {
+            var f = s.create("t", "c", clock.value.plusSeconds(60), clock.value.plusSeconds(120)); String id = f.id();
+            for (String o : List.of("ontime", "lagged", "tooLate")) s.ticket(id, o);
+            clock.value = f.startsAt().plusSeconds(1);
+            var ontime = s.submit(id, "ontime", "A", "", "010", "", clock.value);
+
+            // Arrived 10ms before expiry but processed 1s after it (server under load): still admitted
+            clock.value = f.expiresAt().plusSeconds(1);
+            var lagged = s.submit(id, "lagged", "B", "", "010", "", f.expiresAt().minusMillis(10));
+            assertThrows(IllegalArgumentException.class, () -> s.results(id), "still collecting");
+
+            // Once results can be published nothing is admitted any more, whatever its arrival time
+            clock.value = ReceiptStore.resultsAt(f);
+            assertThrows(IllegalArgumentException.class, () -> s.submit(id, "tooLate", "C", "", "010", "", f.expiresAt().minusMillis(10)));
+            ReceiptStore.Ranking ranking = s.ranking(id);
+            assertEquals(List.of(ontime, lagged), ranking.receipts());
+            assertEquals(2, ranking.rankByTicket().get(lagged.ticketId()));
+            assertSame(ranking, s.ranking(id), "cached after the first computation");
+            assertEquals(2, s.mySubmissions("lagged").get(0).rank());
+
+            s.deleteForm(id);
+            assertThrows(IllegalArgumentException.class, () -> s.ranking(id));
         }
     }
     @Test void concurrentCodesAndReceiptsAreUnique() throws Exception {

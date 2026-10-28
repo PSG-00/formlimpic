@@ -197,6 +197,52 @@ class WebApiAuthTests {
     }
 
     @Test
+    void rankingIsPagedAndIncludesCallersOwnRow() throws Exception {
+        ReceiptStoreTests.TestClock clock = new ReceiptStoreTests.TestClock();
+        ReceiptStore store = new ReceiptStore(dir.resolve("ranking_journal"), clock);
+        WebApi api = new WebApi(store, new BCryptPasswordEncoder(), new DiscordWebhookService(store));
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(api).build();
+        MockHttpSession session = new MockHttpSession();
+        mockMvc.perform(post("/api/auth/signup")
+                        .session(session)
+                        .header("X-Formlimpic", "formlimpic")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"rank_me\",\"password\":\"secret123\"}"))
+                .andExpect(status().isOk());
+        String me = store.findUserByUsername("rank_me").orElseThrow().id();
+        var f = store.create(me, "rank", "c", clock.value.plusSeconds(60), clock.value.plusSeconds(120), false, false);
+        clock.value = f.startsAt();
+        for (int i = 0; i < 150; i++) {
+            String owner = store.registerUser("u" + i, "hash").id();
+            store.ticket(f.id(), owner);
+            store.submit(f.id(), owner, "참가자" + i, "", "010", "", f.startsAt().plusMillis(i));
+        }
+        store.ticket(f.id(), me);
+        store.submit(f.id(), me, "나", "", "010", "", f.startsAt().plusMillis(500)); // last: rank 151
+
+        clock.value = f.expiresAt();
+        mockMvc.perform(get("/api/forms/" + f.id() + "/ranking"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("결과를 집계하고 있습니다. 잠시 후 다시 확인하세요."));
+        mockMvc.perform(get("/api/forms/" + f.id()))
+                .andExpect(jsonPath("$.resultsAt").value(ReceiptStore.resultsAt(f).toString()));
+
+        clock.value = ReceiptStore.resultsAt(f);
+        mockMvc.perform(get("/api/forms/" + f.id() + "/ranking").session(session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(151))
+                .andExpect(jsonPath("$.rows.length()").value(100))
+                .andExpect(jsonPath("$.rows[0].rank").value(1))
+                .andExpect(jsonPath("$.mine.rank").value(151));
+        mockMvc.perform(get("/api/forms/" + f.id() + "/ranking?offset=100&limit=100"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.offset").value(100))
+                .andExpect(jsonPath("$.rows.length()").value(51))
+                .andExpect(jsonPath("$.rows[50].rank").value(151))
+                .andExpect(jsonPath("$.mine").isEmpty());
+    }
+
+    @Test
     void simulatedDelayFollowsPhaseTable() {
         long[][] phases = {{-1000, 40, 55}, {-300, 45, 65}, {-100, 60, 90}, {-1, 80, 120}, {0, 130, 200}, {99, 130, 200},
                 {100, 200, 320}, {2000, 130, 200}, {4000, 80, 130}, {6000, 50, 70}};
