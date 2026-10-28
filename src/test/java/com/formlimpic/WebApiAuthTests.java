@@ -6,11 +6,14 @@ import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -140,6 +143,69 @@ class WebApiAuthTests {
             }
         }
         assertTrue(rateLimited, "Rate limiter should have triggered 429 within 30 rapid requests");
+    }
+
+    @Test
+    void delayedSubmissionIsAdmittedAtArrivalPlusDelayWithoutBlocking() throws Exception {
+        ReceiptStoreTests.TestClock clock = new ReceiptStoreTests.TestClock();
+        ReceiptStore store = new ReceiptStore(dir.resolve("delay_api_journal"), clock);
+        WebApi api = new WebApi(store, new BCryptPasswordEncoder(), new DiscordWebhookService(store));
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(api).build();
+        MockHttpSession session = new MockHttpSession();
+        mockMvc.perform(post("/api/auth/signup")
+                        .session(session)
+                        .header("X-Formlimpic", "formlimpic")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"delay_user\",\"password\":\"secret123\"}"))
+                .andExpect(status().isOk());
+        String userId = store.findUserByUsername("delay_user").orElseThrow().id();
+        Instant start = clock.value.plusSeconds(60);
+        var delayed = store.create(userId, "delay", "c", start, start.plusSeconds(60), false, true);
+        var noDelay = store.create(userId, "no delay", "c", start, start.plusSeconds(60), false, false);
+        for (var f : List.of(delayed, noDelay)) {
+            mockMvc.perform(post("/api/forms/" + f.id() + "/ticket").session(session).header("X-Formlimpic", "formlimpic"))
+                    .andExpect(status().isOk());
+        }
+        String body = "{\"name\":\"홍길동\",\"birthDate\":\"000101\",\"phone\":\"01012345678\",\"bubble\":\"\"}";
+
+        // Clicked 50ms before start: simulated delay 80~120ms lands it after start (선입력 성공)
+        Instant arrival = start.minusMillis(50);
+        clock.value = arrival;
+        MvcResult pending = mockMvc.perform(post("/api/forms/" + delayed.id() + "/submissions")
+                        .session(session)
+                        .header("X-Formlimpic", "formlimpic")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+        mockMvc.perform(asyncDispatch(pending))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.early").value(false));
+        long admittedAfterArrival = Duration.between(arrival, store.mine(delayed.id(), userId).receivedAt()).toMillis();
+        assertTrue(admittedAfterArrival >= 80 && admittedAfterArrival <= 120, "admitted " + admittedAfterArrival + "ms after arrival");
+
+        // No-delay form answers synchronously and is admitted at arrival
+        mockMvc.perform(post("/api/forms/" + noDelay.id() + "/submissions")
+                        .session(session)
+                        .header("X-Formlimpic", "formlimpic")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(request().asyncNotStarted())
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.early").value(true));
+        assertEquals(arrival, store.mine(noDelay.id(), userId).receivedAt());
+    }
+
+    @Test
+    void simulatedDelayFollowsPhaseTable() {
+        long[][] phases = {{-1000, 40, 55}, {-300, 45, 65}, {-100, 60, 90}, {-1, 80, 120}, {0, 130, 200}, {99, 130, 200},
+                {100, 200, 320}, {2000, 130, 200}, {4000, 80, 130}, {6000, 50, 70}};
+        for (long[] p : phases) {
+            for (int i = 0; i < 500; i++) {
+                int d = WebApi.simulatedDelayMs(p[0]);
+                assertTrue(d >= p[1] && d <= p[2], p[0] + "ms from start -> " + d + "ms");
+            }
+        }
     }
 
     @Test

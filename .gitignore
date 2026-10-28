@@ -46,3 +46,4 @@ cloudflared.exe
 *.log
 deploy_webhook.url
 loadtest_bypass.token
+formlimpic.env

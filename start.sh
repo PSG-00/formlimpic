@@ -75,6 +75,8 @@ User=${CURRENT_USER}
 WorkingDirectory=${CURRENT_DIR}
 Environment="PATH=${PATH}"
 Environment="FORMLIMPIC_LOADTEST_BYPASS=${BYPASS_TOKEN}"
+# 서버별 설정 (선택): 예) FORMLIMPIC_TRUST_PROXY_ARRIVAL=true
+EnvironmentFile=-${CURRENT_DIR}/formlimpic.env
 ExecStart=/bin/bash -c 'exec "${JAVA_BIN}" ${JAVA_OPTS} -jar build/libs/formlimpic-0.0.1-SNAPSHOT.jar > app.log 2>&1'
 Restart=always
 RestartSec=5
@@ -88,6 +90,7 @@ EOF
     sudo systemctl restart formlimpic
 else
     echo "🌱 [4/4] 스프링 부트 서버 백그라운드 기동..."
+    if [ -f formlimpic.env ]; then set -a; . ./formlimpic.env; set +a; fi
     FORMLIMPIC_LOADTEST_BYPASS="$BYPASS_TOKEN" nohup java ${JAVA_OPTS} -jar build/libs/formlimpic-0.0.1-SNAPSHOT.jar > app.log 2>&1 &
 fi
 

@@ -1,5 +1,6 @@
 package com.formlimpic;
 
+import jakarta.annotation.PreDestroy;
 import jakarta.servlet.http.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.*;
@@ -7,11 +8,15 @@ import org.springframework.http.*;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.context.request.async.DeferredResult;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.time.*;
 import java.util.*;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 
 @Configuration
 class StoreConfiguration {
@@ -29,6 +34,11 @@ public class WebApi {
     private final ReceiptStore store;
     private final PasswordEncoder encoder;
     private final DiscordWebhookService discordService;
+    private final ScheduledExecutorService responseDelay = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "submit-response-delay");
+        t.setDaemon(true);
+        return t;
+    });
 
     WebApi(ReceiptStore store, PasswordEncoder encoder, DiscordWebhookService discordService) {
         this.store = store;
@@ -234,44 +244,57 @@ public class WebApi {
     Object submit(@PathVariable String id, @RequestBody Answer a, HttpServletRequest req) {
         UserProfile user = requireUser(req);
         ReceiptStore.Form form = store.form(id);
-        if (form != null && form.hasDelay()) {
-            long diffFromStart = System.currentTimeMillis() - form.startsAt().toEpochMilli();
-            int delay;
-            if (diffFromStart < -400) {
-                // 1단계: 59.60초 이전 (대기열 제로, 순수 통신 지연: 40 ~ 55ms)
-                delay = 40 + ThreadLocalRandom.current().nextInt(16);
-            } else if (diffFromStart < -200) {
-                // 2단계: 59.60초 ~ 59.80초 (대기열 극소: 45 ~ 65ms)
-                delay = 45 + ThreadLocalRandom.current().nextInt(21);
-            } else if (diffFromStart < -80) {
-                // 3단계: 59.80초 ~ 59.92초 (선입력 유입 시작: 60 ~ 90ms)
-                delay = 60 + ThreadLocalRandom.current().nextInt(31);
-            } else if (diffFromStart < 0) {
-                // 4단계: 59.92초 ~ 정각 직전 (선입력 격전, 적체 시작: 80 ~ 120ms)
-                delay = 80 + ThreadLocalRandom.current().nextInt(41);
-            } else if (diffFromStart < 100) {
-                // 5단계: 정각 00.00초 ~ 00.10초 (정각단 유입, 큐 폭발: 130 ~ 200ms)
-                delay = 130 + ThreadLocalRandom.current().nextInt(71);
-            } else if (diffFromStart < 1500) {
-                // 6단계: 00.10초 ~ 01.50초 (트래픽 정점, 큐 최고조 포화: 200 ~ 320ms)
-                delay = 200 + ThreadLocalRandom.current().nextInt(121);
-            } else if (diffFromStart < 3000) {
-                // 7단계: 01.50초 ~ 03.00초 (대기열 1차 소진 중: 130 ~ 200ms)
-                delay = 130 + ThreadLocalRandom.current().nextInt(71);
-            } else if (diffFromStart < 5000) {
-                // 8단계: 03.00초 ~ 05.00초 (대기열 막바지 해소 중: 80 ~ 130ms)
-                delay = 80 + ThreadLocalRandom.current().nextInt(51);
-            } else {
-                // 9단계: 05.00초 이후 (완전 정상화 복귀: 50 ~ 70ms)
-                delay = 50 + ThreadLocalRandom.current().nextInt(21);
-            }
-            try {
-                Thread.sleep(delay);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
+        // 접수 시각 = 서버 도착 시각 + 시뮬레이션 지연. 순위는 이 시각으로 정해지므로
+        // 서버가 붐벼서 처리 순서가 밀려도(실제 대기열) 결과가 흔들리지 않는다.
+        Instant arrivedAt = req.getAttribute(ArrivalTimeFilter.ATTRIBUTE) instanceof Instant t ? t : store.now();
+        int delay = form.hasDelay() ? simulatedDelayMs(Duration.between(form.startsAt(), arrivedAt).toMillis()) : 0;
+        Instant admittedAt = arrivedAt.plusMillis(delay);
+        ReceiptStore.Receipt receipt = store.submit(id, user.id(), a.name(), a.birthDate(), a.phone(), a.bubble(), admittedAt);
+
+        long wait = Duration.between(store.now(), admittedAt).toMillis();
+        if (wait <= 0) return receipt;
+        // 응답만 접수 시각까지 늦춘다. Thread.sleep 과 달리 톰캣 스레드를 붙잡지 않는다.
+        DeferredResult<ReceiptStore.Receipt> result = new DeferredResult<>(10_000L);
+        responseDelay.schedule(() -> result.setResult(receipt), wait, TimeUnit.MILLISECONDS);
+        return result;
+    }
+
+    /** 서버 도착 시점(시작 시각 기준 ms)에 따른 시뮬레이션 지연: 실제 폼림픽의 통신 지연 + 대기열을 흉내낸다. */
+    static int simulatedDelayMs(long diffFromStart) {
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        if (diffFromStart < -400) {
+            // 1단계: 59.60초 이전 (대기열 제로, 순수 통신 지연: 40 ~ 55ms)
+            return 40 + random.nextInt(16);
+        } else if (diffFromStart < -200) {
+            // 2단계: 59.60초 ~ 59.80초 (대기열 극소: 45 ~ 65ms)
+            return 45 + random.nextInt(21);
+        } else if (diffFromStart < -80) {
+            // 3단계: 59.80초 ~ 59.92초 (선입력 유입 시작: 60 ~ 90ms)
+            return 60 + random.nextInt(31);
+        } else if (diffFromStart < 0) {
+            // 4단계: 59.92초 ~ 정각 직전 (선입력 격전, 적체 시작: 80 ~ 120ms)
+            return 80 + random.nextInt(41);
+        } else if (diffFromStart < 100) {
+            // 5단계: 정각 00.00초 ~ 00.10초 (정각단 유입, 큐 폭발: 130 ~ 200ms)
+            return 130 + random.nextInt(71);
+        } else if (diffFromStart < 1500) {
+            // 6단계: 00.10초 ~ 01.50초 (트래픽 정점, 큐 최고조 포화: 200 ~ 320ms)
+            return 200 + random.nextInt(121);
+        } else if (diffFromStart < 3000) {
+            // 7단계: 01.50초 ~ 03.00초 (대기열 1차 소진 중: 130 ~ 200ms)
+            return 130 + random.nextInt(71);
+        } else if (diffFromStart < 5000) {
+            // 8단계: 03.00초 ~ 05.00초 (대기열 막바지 해소 중: 80 ~ 130ms)
+            return 80 + random.nextInt(51);
+        } else {
+            // 9단계: 05.00초 이후 (완전 정상화 복귀: 50 ~ 70ms)
+            return 50 + random.nextInt(21);
         }
-        return store.submit(id, user.id(), a.name(), a.birthDate(), a.phone(), a.bubble());
+    }
+
+    @PreDestroy
+    void stopResponseDelay() {
+        responseDelay.shutdown(); // already scheduled responses still run (default executor policy)
     }
 
     static String maskName(String s) {

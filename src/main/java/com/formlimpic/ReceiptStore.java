@@ -337,6 +337,10 @@ public final class ReceiptStore implements AutoCloseable {
         return submit(formId, owner, name, "", phone, "");
     }
     public synchronized Receipt submit(String formId, String owner, String name, String birthDate, String phone, String bubble) {
+        return submit(formId, owner, name, birthDate, phone, bubble, now());
+    }
+    /** time: the admission time the receipt is ranked by (server arrival + simulated network delay). */
+    public synchronized Receipt submit(String formId, String owner, String name, String birthDate, String phone, String bubble, Instant time) {
         Ticket t = ticketsByFormAndOwner.get(formId + "\0" + owner);
         if (t == null) throw new IllegalArgumentException("먼저 멤버십 코드를 발급받으세요.");
         Receipt existing = receipts.get(t.id());
@@ -346,13 +350,15 @@ public final class ReceiptStore implements AutoCloseable {
         phone = text(phone, 30);
         bubble = optionalText(bubble, 50);
         Form f = form(formId);
-        Instant time = now(); open(f, time);
+        open(f, time);
         append(props("type", "receipt", "id", UUID.randomUUID().toString(), "form", formId, "ticket", t.id(), "name", name, "birthDate", birthDate, "phone", phone, "bubble", bubble, "code", t.code(), "time", time.toString(), "early", Boolean.toString(time.isBefore(f.startsAt()))));
         return receipts.get(t.id());
     }
     public synchronized List<Receipt> results(String formId) {
         if (now().isBefore(form(formId).expiresAt())) throw new IllegalArgumentException("만료 후 결과가 공개됩니다.");
-        return receipts.values().stream().filter(r -> r.formId().equals(formId)).sorted(Comparator.comparing(Receipt::early).thenComparingLong(Receipt::sequence)).toList();
+        // Admission time first (arrival + simulated delay), journal sequence breaks exact ties.
+        // Older receipts were stamped under the same lock as their sequence, so their order is unchanged.
+        return receipts.values().stream().filter(r -> r.formId().equals(formId)).sorted(Comparator.comparing(Receipt::early).thenComparing(Receipt::receivedAt).thenComparingLong(Receipt::sequence)).toList();
     }
     public synchronized List<Form> myForms(String owner) {
         if (owner == null || owner.isBlank()) return List.of();

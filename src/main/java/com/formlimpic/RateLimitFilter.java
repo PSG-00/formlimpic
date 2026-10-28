@@ -180,7 +180,7 @@ public class RateLimitFilter implements Filter {
         return "POST".equals(req.getMethod()) && uri.startsWith("/api/forms/") && uri.endsWith("/submissions");
     }
 
-    private static boolean isLoopback(String addr) {
+    static boolean isLoopback(String addr) {
         return addr != null && (addr.startsWith("127.") || addr.equals("::1") || addr.equals("0:0:0:0:0:0:0:1"));
     }
 }

@@ -562,4 +562,11 @@ k6 run -e BYPASS_TOKEN=my-local-token loadtest.js
   - 빌드/테스트 100% 통과 시에만 GCP VM(`e2-highcpu-4`)으로 SSH 접속하여 `./start.sh` 원클릭 자동 배포 수행 (CD).
 - **실시간 디스코드 배포 알림**:
   - 배포 완료 시 접속 주소(`https://formlimpic.rescene.online`, Caddy → `127.0.0.1:8080`)와 갱신된 관리자 일회성 비밀번호를 등록된 디스코드 웹훅으로 자동 전송.
+- **정확한 도착 시각 (Caddy 스탬프)**:
+  - 순위는 `서버 도착 시각 + 시뮬레이션 지연`으로 정해지고, 응답만 그 시각까지 늦게 보냅니다(톰캣 스레드를 붙잡지 않음).
+  - 5,000명이 한꺼번에 몰리면 톰캣 스레드가 요청을 잡기 전에 대기가 생기므로, Caddy가 요청을 받은 순간의 시각을 넘겨받아 씁니다.
+  - 설정 순서 (반드시 1 → 2):
+    1. Caddyfile의 `reverse_proxy 127.0.0.1:8080 { ... }` 안에 `header_up X-Arrived-At {time.now.unix_ms}` 추가 후 `sudo systemctl reload caddy`
+    2. 프로젝트 폴더의 `formlimpic.env`에 `FORMLIMPIC_TRUST_PROXY_ARRIVAL=true` 추가 후 `sudo systemctl restart formlimpic`
+  - 1 없이 2만 켜면 클라이언트가 헤더를 위조해 도착 시각을 앞당길 수 있습니다. (헤더는 루프백(Caddy)에서 온 요청만, 현재 시각 기준 -30초~+1초 범위만 신뢰)
 

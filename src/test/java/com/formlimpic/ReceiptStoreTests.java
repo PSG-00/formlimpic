@@ -37,6 +37,28 @@ class ReceiptStoreTests {
             assertEquals(receiptId, restored.submit(id, "normal", "x", "y").id());
         }
     }
+    @Test void ranksByAdmissionTimeNotArrivalOrder() throws Exception {
+        TestClock clock = new TestClock(); Path path = dir.resolve("admission_journal"); String id; List<ReceiptStore.Receipt> expected;
+        try (ReceiptStore s = new ReceiptStore(path, clock)) {
+            var f = s.create("t", "c", clock.value.plusSeconds(60), clock.value.plusSeconds(120)); id = f.id();
+            for (String o : List.of("a", "b", "c", "d", "e")) s.ticket(id, o);
+            Instant start = f.startsAt();
+            clock.value = start.plusMillis(10);
+            // Journal (arrival) order a, b, c, d; admission time = arrival + simulated delay
+            var a = s.submit(id, "a", "A", "", "010", "", start.plusMillis(300));
+            var b = s.submit(id, "b", "B", "", "010", "", start.plusMillis(150));
+            var c = s.submit(id, "c", "C", "", "010", "", start.minusMillis(5));
+            var d = s.submit(id, "d", "D", "", "010", "", start.plusMillis(150));
+            assertTrue(c.early()); assertFalse(b.early());
+            assertThrows(IllegalArgumentException.class, () -> s.submit(id, "e", "E", "", "010", "", f.expiresAt()));
+            clock.value = f.expiresAt();
+            expected = List.of(b, d, a, c); // equal admission time: earlier sequence wins; early submissions go last
+            assertEquals(expected, s.results(id));
+        }
+        try (ReceiptStore restored = new ReceiptStore(path, clock)) {
+            assertEquals(expected, restored.results(id));
+        }
+    }
     @Test void concurrentCodesAndReceiptsAreUnique() throws Exception {
         TestClock clock = new TestClock();
         try (ReceiptStore s = new ReceiptStore(dir.resolve("journal"), clock)) {

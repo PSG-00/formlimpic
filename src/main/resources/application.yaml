@@ -35,3 +35,5 @@ formlimpic:
   journal: ${JOURNAL_PATH:./data/receipts.log}
   # 부하 테스트용 레이트리밋 우회 토큰. 비어 있으면 우회 기능 비활성화
   loadtest-bypass-token: ${FORMLIMPIC_LOADTEST_BYPASS:}
+  # Caddy가 찍은 도착 시각(X-Arrived-At) 사용 여부. Caddyfile에 header_up X-Arrived-At {time.now.unix_ms} 를 넣은 뒤에만 켤 것
+  trust-proxy-arrival: ${FORMLIMPIC_TRUST_PROXY_ARRIVAL:false}
