@@ -20,8 +20,9 @@ import java.util.concurrent.TimeUnit;
 
 @Configuration
 class StoreConfiguration {
-    @Bean(destroyMethod = "close") ReceiptStore receiptStore(@Value("${formlimpic.journal}") String path) throws IOException {
-        return new ReceiptStore(Path.of(path), Clock.systemUTC());
+    @Bean(destroyMethod = "close") ReceiptStore receiptStore(@Value("${formlimpic.journal}") String path,
+                                                             @Value("${formlimpic.journal-repair-tail:false}") boolean repairTail) throws IOException {
+        return new ReceiptStore(Path.of(path), Clock.systemUTC(), repairTail);
     }
     @Bean PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();

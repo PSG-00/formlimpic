@@ -9,6 +9,7 @@ import java.security.SecureRandom;
 import java.time.*;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.function.Supplier;
 import java.util.zip.CRC32;
 
 /** Single-process durable admission journal. Never acknowledge before force(true). */
@@ -72,43 +73,98 @@ public final class ReceiptStore implements AutoCloseable {
     private final Thread flusherThread;
     private volatile boolean running = true;
     private volatile boolean failed; // set by journal-flusher, read by request threads
+    private static final String FAILED_MESSAGE = "접수 기록 장치에 문제가 있습니다. 잠시 후 다시 시도하세요.";
+    private static final long DURABLE_TIMEOUT_MS = 5000;
+    private final Path path;
+    private final boolean repairTail;
+    private volatile long appendedSequence; // last event handed to the flusher
+    private volatile long durableSequence;  // last event written and forced to disk
+    private final Object durability = new Object();
+    private volatile IOException injectedFailure; // tests only: simulate a failing journal device
 
     public ReceiptStore(Path path, Clock clock) throws IOException {
+        this(path, clock, false);
+    }
+    /** repairTail: on a corrupt frame, back the file up and truncate there instead of refusing to start. */
+    public ReceiptStore(Path path, Clock clock, boolean repairTail) throws IOException {
         this.clock = clock;
+        this.path = path;
+        this.repairTail = repairTail;
         Files.createDirectories(path.toAbsolutePath().getParent());
         channel = FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
         lock = channel.tryLock();
         if (lock == null) { channel.close(); throw new IOException("Journal already in use"); }
         try { recover(); } catch (Exception e) { close(); throw e; }
+        appendedSequence = durableSequence = events.size();
         flusherThread = new Thread(this::flusherLoop, "journal-flusher");
         flusherThread.setDaemon(true);
         flusherThread.start();
     }
     private void recover() throws IOException {
         long good = 0;
+        String corrupt = null;
         while (channel.position() < channel.size()) {
             if (channel.size() - channel.position() < 8) break;
             ByteBuffer header = ByteBuffer.allocate(8); readFully(header); header.flip();
             int length = header.getInt(), checksum = header.getInt();
-            if (length < 1 || length > 1_000_000) throw new IOException("Invalid journal frame");
+            if (length < 1 || length > 1_000_000) { corrupt = "Invalid journal frame"; break; }
             if (channel.size() - channel.position() < length) break;
             ByteBuffer body = ByteBuffer.allocate(length); readFully(body);
             CRC32 crc = new CRC32(); crc.update(body.array());
-            if ((int) crc.getValue() != checksum) throw new IOException("Journal checksum mismatch; restore from backup");
+            if ((int) crc.getValue() != checksum) { corrupt = "Journal checksum mismatch"; break; }
             Properties p = new Properties(); p.load(new ByteArrayInputStream(body.array()));
             Event event = new Event(events.size() + 1L, p); apply(event); events.add(event);
             good = channel.position();
+        }
+        if (corrupt != null) {
+            if (!repairTail) throw new IOException(corrupt + " at byte " + good + "; restore from backup, or start once with JOURNAL_REPAIR_TAIL=true to keep the " + events.size() + " events before it");
+            Path backup = path.resolveSibling(path.getFileName() + ".corrupt-" + System.currentTimeMillis());
+            try (FileChannel copy = FileChannel.open(backup, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+                channel.transferTo(0, channel.size(), copy);
+                copy.force(true);
+            }
+            System.err.printf("[journal] %s at byte %d: kept %d events, dropped %d bytes, original saved to %s%n", corrupt, good, events.size(), channel.size() - good, backup);
         }
         channel.truncate(good); channel.position(good); channel.force(true);
     }
     private void readFully(ByteBuffer b) throws IOException { while (b.hasRemaining()) if (channel.read(b) < 0) throw new EOFException(); }
     private void append(Properties p) {
-        if (failed) throw new IllegalStateException("접수 기록 장치에 문제가 있습니다. 잠시 후 다시 시도하세요.");
+        if (failed) throw new IllegalStateException(FAILED_MESSAGE);
         Event event = new Event(events.size() + 1L, p);
         apply(event);
         events.add(event);
         journalQueue.offer(event);
+        appendedSequence = event.sequence();
     }
+    /**
+     * Runs a write under the store lock, then waits outside it until the journal is forced to disk, so a
+     * success is never answered for a record a crash could lose. Concurrent writers share one fsync (group commit).
+     * Waiting for everything appended so far also covers returning an existing record written by another request.
+     */
+    private <T> T durable(Supplier<T> write) {
+        T result = write.get();
+        awaitDurable(appendedSequence);
+        return result;
+    }
+    private void awaitDurable(long target) {
+        if (durableSequence >= target) return;
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(DURABLE_TIMEOUT_MS);
+        synchronized (durability) {
+            while (durableSequence < target) {
+                if (failed) throw new IllegalStateException(FAILED_MESSAGE);
+                long left = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+                if (left <= 0) throw new IllegalStateException("접수 기록이 지연되고 있습니다. 잠시 후 다시 시도하세요.");
+                try { durability.wait(left); } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException(FAILED_MESSAGE); }
+            }
+        }
+    }
+    private void markDurable(long sequence) {
+        synchronized (durability) { durableSequence = sequence; durability.notifyAll(); }
+    }
+    private void markFailed() {
+        synchronized (durability) { failed = true; durability.notifyAll(); }
+    }
+    void simulateDiskFailureForTest() { injectedFailure = new IOException("simulated journal device failure"); }
     private void flusherLoop() {
         List<Event> batch = new ArrayList<>(1024);
         while (running || !journalQueue.isEmpty()) {
@@ -136,10 +192,13 @@ public final class ReceiptStore implements AutoCloseable {
             } catch (InterruptedException ignored) {
                 break;
             } catch (IOException e) {
-                failed = true;
+                markFailed();
                 break;
             }
         }
+        // After a failed write the file may end in a partial frame: appending more would bury it mid-file
+        // and make the journal unreadable, so nothing more is written.
+        if (failed) return;
         List<Event> remaining = new ArrayList<>();
         journalQueue.drainTo(remaining);
         remaining.removeIf(b -> b == POISON_PILL);
@@ -147,12 +206,13 @@ public final class ReceiptStore implements AutoCloseable {
             try {
                 flushBatch(remaining);
             } catch (IOException e) {
-                failed = true;
+                markFailed();
             }
         }
     }
     private void flushBatch(List<Event> batch) throws IOException {
         synchronized (channel) {
+            if (injectedFailure != null) throw injectedFailure;
             if (channel.isOpen()) {
                 for (Event event : batch) {
                     ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -168,6 +228,7 @@ public final class ReceiptStore implements AutoCloseable {
                     while (frame.hasRemaining()) channel.write(frame);
                 }
                 channel.force(true);
+                markDurable(batch.get(batch.size() - 1).sequence());
             }
         }
     }
@@ -263,7 +324,23 @@ public final class ReceiptStore implements AutoCloseable {
             default -> throw new IllegalStateException("Unknown journal event");
         }
     }
-    public synchronized User registerUser(String username, String passwordHash) {
+    // Writes: public methods wait for the disk outside the lock; the *Locked variants do the in-memory work.
+    public User registerUser(String username, String passwordHash) { return durable(() -> registerUserLocked(username, passwordHash)); }
+    public void setAdminOnlyFormCreation(boolean adminOnly) { durable(() -> { setAdminOnlyFormCreationLocked(adminOnly); return null; }); }
+    public void deleteForm(String formId) { durable(() -> { deleteFormLocked(formId); return null; }); }
+    public User updateUserPassword(String userId, String passwordHash) { return durable(() -> updateUserPasswordLocked(userId, passwordHash)); }
+    public Form create(String owner, String title, String content, Instant start, Instant end, boolean hasBubble, boolean hasDelay) {
+        return durable(() -> createLocked(owner, title, content, start, end, hasBubble, hasDelay));
+    }
+    public Ticket ticket(String formId, String owner) { return durable(() -> ticketLocked(formId, owner)); }
+    /** time: the admission time the receipt is ranked by (server arrival + simulated network delay). */
+    public Receipt submit(String formId, String owner, String name, String birthDate, String phone, String bubble, Instant time) {
+        return durable(() -> submitLocked(formId, owner, name, birthDate, phone, bubble, time));
+    }
+    public User updateWebhook(String userId, String webhookUrl) { return durable(() -> updateWebhookLocked(userId, webhookUrl)); }
+    public void markFormNotified(String formId) { durable(() -> { markFormNotifiedLocked(formId); return null; }); }
+
+    private synchronized User registerUserLocked(String username, String passwordHash) {
         username = text(username, 30);
         if (usersByUsername.containsKey(username)) throw new IllegalArgumentException("이미 사용 중인 아이디입니다.");
         if (usersByMembershipCode.size() >= 308915776) throw new IllegalStateException("발급 가능한 멤버십 코드가 소진되었습니다.");
@@ -280,10 +357,10 @@ public final class ReceiptStore implements AutoCloseable {
         return usersById.get(id);
     }
     public boolean isAdminOnlyFormCreation() { return adminOnlyFormCreation; }
-    public synchronized void setAdminOnlyFormCreation(boolean adminOnly) {
+    private synchronized void setAdminOnlyFormCreationLocked(boolean adminOnly) {
         append(props("type", "setting", "key", "adminOnlyFormCreation", "value", Boolean.toString(adminOnly)));
     }
-    public synchronized void deleteForm(String formId) {
+    private synchronized void deleteFormLocked(String formId) {
         if (!forms.containsKey(formId)) throw new IllegalArgumentException("삭제할 폼림픽을 찾을 수 없습니다.");
         append(props("type", "form_deleted", "id", formId));
     }
@@ -292,7 +369,7 @@ public final class ReceiptStore implements AutoCloseable {
         User u = usersById.get(ownerId);
         return u != null && "ADMIN".equalsIgnoreCase(u.role());
     }
-    public synchronized User updateUserPassword(String userId, String passwordHash) {
+    private synchronized User updateUserPasswordLocked(String userId, String passwordHash) {
         User u = usersById.get(userId);
         if (u == null) throw new IllegalArgumentException("사용자를 찾을 수 없습니다.");
         append(props("type", "user_password", "id", UUID.randomUUID().toString(), "userId", userId, "hash", passwordHash, "time", now().toString()));
@@ -309,16 +386,16 @@ public final class ReceiptStore implements AutoCloseable {
     public synchronized List<Form> forms() { return new ArrayList<>(forms.values()); }
     public synchronized Form form(String id) { Form f = forms.get(id); if (f == null) throw new IllegalArgumentException("폼림픽을 찾을 수 없습니다."); return f; }
     public Instant now() { return clock.instant(); }
-    public synchronized Form create(String title, String content, Instant start, Instant end) {
+    public Form create(String title, String content, Instant start, Instant end) {
         return create("", title, content, start, end, false, true);
     }
-    public synchronized Form create(String owner, String title, String content, Instant start, Instant end) {
+    public Form create(String owner, String title, String content, Instant start, Instant end) {
         return create(owner, title, content, start, end, false, true);
     }
-    public synchronized Form create(String owner, String title, String content, Instant start, Instant end, boolean hasBubble) {
+    public Form create(String owner, String title, String content, Instant start, Instant end, boolean hasBubble) {
         return create(owner, title, content, start, end, hasBubble, true);
     }
-    public synchronized Form create(String owner, String title, String content, Instant start, Instant end, boolean hasBubble, boolean hasDelay) {
+    private synchronized Form createLocked(String owner, String title, String content, Instant start, Instant end, boolean hasBubble, boolean hasDelay) {
         title = text(title, 120); content = text(content, 10000);
         if (start == null || end == null || !start.isAfter(now()) || !end.isAfter(start)) throw new IllegalArgumentException("시작은 현재 이후, 만료는 시작 이후여야 합니다.");
         String id = UUID.randomUUID().toString();
@@ -330,7 +407,7 @@ public final class ReceiptStore implements AutoCloseable {
         if (time.isBefore(f.startsAt().minusSeconds(600))) throw new IllegalArgumentException("신청 시작 10분 전부터 작성할 수 있습니다.");
         if (!time.isBefore(f.expiresAt())) throw new IllegalArgumentException("신청이 마감되었습니다.");
     }
-    public synchronized Ticket ticket(String formId, String owner) {
+    private synchronized Ticket ticketLocked(String formId, String owner) {
         Form f = form(formId);
         Ticket existing = ticketsByFormAndOwner.get(formId + "\0" + owner);
         if (existing != null) return existing;
@@ -353,14 +430,13 @@ public final class ReceiptStore implements AutoCloseable {
         if (t == null) return null;
         return receipts.get(t.id());
     }
-    public synchronized Receipt submit(String formId, String owner, String name, String phone) {
+    public Receipt submit(String formId, String owner, String name, String phone) {
         return submit(formId, owner, name, "", phone, "");
     }
-    public synchronized Receipt submit(String formId, String owner, String name, String birthDate, String phone, String bubble) {
+    public Receipt submit(String formId, String owner, String name, String birthDate, String phone, String bubble) {
         return submit(formId, owner, name, birthDate, phone, bubble, now());
     }
-    /** time: the admission time the receipt is ranked by (server arrival + simulated network delay). */
-    public synchronized Receipt submit(String formId, String owner, String name, String birthDate, String phone, String bubble, Instant time) {
+    private synchronized Receipt submitLocked(String formId, String owner, String name, String birthDate, String phone, String bubble, Instant time) {
         Ticket t = ticketsByFormAndOwner.get(formId + "\0" + owner);
         if (t == null) throw new IllegalArgumentException("먼저 멤버십 코드를 발급받으세요.");
         Receipt existing = receipts.get(t.id());
@@ -423,7 +499,7 @@ public final class ReceiptStore implements AutoCloseable {
         list.sort((a, b) -> b.receipt().receivedAt().compareTo(a.receipt().receivedAt()));
         return list;
     }
-    public synchronized User updateWebhook(String userId, String webhookUrl) {
+    private synchronized User updateWebhookLocked(String userId, String webhookUrl) {
         User old = usersById.get(userId);
         if (old == null) throw new IllegalArgumentException("사용자를 찾을 수 없습니다.");
         String cleaned = webhookUrl != null ? webhookUrl.trim() : "";
@@ -446,7 +522,7 @@ public final class ReceiptStore implements AutoCloseable {
         }
         return list;
     }
-    public synchronized void markFormNotified(String formId) {
+    private synchronized void markFormNotifiedLocked(String formId) {
         if (!notifiedFormIds.contains(formId)) {
             append(props("type", "form_notified", "id", formId));
         }
@@ -467,7 +543,7 @@ public final class ReceiptStore implements AutoCloseable {
         List<Event> remaining = new ArrayList<>();
         journalQueue.drainTo(remaining);
         remaining.removeIf(b -> b == POISON_PILL);
-        if (!remaining.isEmpty()) {
+        if (!remaining.isEmpty() && !failed) {
             flushBatch(remaining);
         }
         if (lock != null && lock.isValid()) lock.release();

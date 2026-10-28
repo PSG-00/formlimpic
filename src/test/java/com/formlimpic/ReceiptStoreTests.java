@@ -86,6 +86,38 @@ class ReceiptStoreTests {
             assertThrows(IllegalArgumentException.class, () -> s.ranking(id));
         }
     }
+    @Test void writesAreDurableBeforeReturningAndDiskFailureIsNeverAcknowledged() throws Exception {
+        TestClock clock = new TestClock(); Path p = dir.resolve("durable_journal");
+        try (ReceiptStore s = new ReceiptStore(p, clock)) {
+            long before = Files.size(p);
+            s.create("kept", "c", clock.value.plusSeconds(60), clock.value.plusSeconds(120));
+            assertTrue(Files.size(p) > before, "forced to disk before create() returned");
+
+            s.simulateDiskFailureForTest();
+            var e = assertThrows(IllegalStateException.class, () -> s.create("lost", "c", clock.value.plusSeconds(60), clock.value.plusSeconds(120)));
+            assertEquals("접수 기록 장치에 문제가 있습니다. 잠시 후 다시 시도하세요.", e.getMessage());
+            assertThrows(IllegalStateException.class, () -> s.registerUser("after_failure", "hash"), "store stops accepting writes");
+        }
+        try (ReceiptStore restored = new ReceiptStore(p, clock)) {
+            assertEquals(List.of("kept"), restored.forms().stream().map(ReceiptStore.Form::title).toList());
+        }
+    }
+    @Test void corruptFrameRepairIsOptInAndKeepsABackup() throws Exception {
+        TestClock clock = new TestClock(); Path p = dir.resolve("repair").resolve("journal");
+        try (ReceiptStore s = new ReceiptStore(p, clock)) {
+            s.create("first", "c", clock.value.plusSeconds(60), clock.value.plusSeconds(120));
+            s.create("second", "c", clock.value.plusSeconds(60), clock.value.plusSeconds(120));
+        }
+        byte[] bytes = Files.readAllBytes(p); bytes[bytes.length - 1] ^= 1; Files.write(p, bytes);
+        assertThrows(java.io.IOException.class, () -> new ReceiptStore(p, clock));
+        try (ReceiptStore repaired = new ReceiptStore(p, clock, true)) {
+            assertEquals(List.of("first"), repaired.forms().stream().map(ReceiptStore.Form::title).toList());
+        }
+        try (var files = Files.list(p.getParent())) {
+            assertTrue(files.anyMatch(f -> f.getFileName().toString().startsWith("journal.corrupt-")), "original kept as backup");
+        }
+        try (ReceiptStore reopened = new ReceiptStore(p, clock)) { assertEquals(1, reopened.forms().size()); }
+    }
     @Test void concurrentCodesAndReceiptsAreUnique() throws Exception {
         TestClock clock = new TestClock();
         try (ReceiptStore s = new ReceiptStore(dir.resolve("journal"), clock)) {
