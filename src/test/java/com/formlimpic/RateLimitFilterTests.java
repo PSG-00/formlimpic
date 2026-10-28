@@ -14,7 +14,7 @@ class RateLimitFilterTests {
 
     @BeforeEach
     void setUp() {
-        filter = new RateLimitFilter();
+        filter = new RateLimitFilter("test-bypass-token");
     }
 
     @Test
@@ -87,11 +87,34 @@ class RateLimitFilterTests {
         for (int i = 0; i < 700; i++) {
             MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/forms");
             req.setRemoteAddr(testIp);
-            req.addHeader("X-Formlimpic-Bypass", "formlimpic-loadtest-pass");
+            req.addHeader("X-Formlimpic-Bypass", "test-bypass-token");
             MockHttpServletResponse res = new MockHttpServletResponse();
             filter.doFilter(req, res, new MockFilterChain());
             assertEquals(200, res.getStatus());
         }
+    }
+
+    @Test
+    void bypassRequiresMatchingConfiguredToken() throws Exception {
+        // Wrong token (the old hard-coded value) does not bypass
+        assertEquals(429, sixteenthStatus(filter, "192.168.1.104", "formlimpic-loadtest-pass"));
+
+        // No token configured on the server: bypass disabled even for an empty header
+        RateLimitFilter noBypass = new RateLimitFilter("");
+        assertEquals(429, sixteenthStatus(noBypass, "192.168.1.105", ""));
+    }
+
+    private static int sixteenthStatus(RateLimitFilter f, String ip, String bypassHeader) throws Exception {
+        int status = 0;
+        for (int i = 0; i < 16; i++) {
+            MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/forms");
+            req.setRemoteAddr(ip);
+            req.addHeader("X-Formlimpic-Bypass", bypassHeader);
+            MockHttpServletResponse res = new MockHttpServletResponse();
+            f.doFilter(req, res, new MockFilterChain());
+            status = res.getStatus();
+        }
+        return status;
     }
 
     @Test
@@ -125,5 +148,26 @@ class RateLimitFilterTests {
         MockHttpServletRequest reqDirect = new MockHttpServletRequest();
         reqDirect.setRemoteAddr("172.16.0.5");
         assertEquals("172.16.0.5", filter.resolveClientIp(reqDirect));
+    }
+
+    @Test
+    void resolveClientIpIgnoresProxyHeadersFromNonLoopbackPeer() {
+        // Direct hit on :8080 from the internet with forged headers
+        MockHttpServletRequest req = new MockHttpServletRequest();
+        req.addHeader("X-Real-IP", "1.1.1.1");
+        req.addHeader("X-Forwarded-For", "2.2.2.2");
+        req.addHeader("CF-Connecting-IP", "3.3.3.3");
+        req.setRemoteAddr("203.0.113.77");
+
+        assertEquals("203.0.113.77", filter.resolveClientIp(req));
+    }
+
+    @Test
+    void resolveClientIpTrustsIpv6LoopbackProxy() {
+        MockHttpServletRequest req = new MockHttpServletRequest();
+        req.addHeader("X-Real-IP", "203.0.113.9");
+        req.setRemoteAddr("0:0:0:0:0:0:0:1");
+
+        assertEquals("203.0.113.9", filter.resolveClientIp(req));
     }
 }

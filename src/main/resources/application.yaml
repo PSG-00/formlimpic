@@ -1,6 +1,7 @@
 server:
   port: 8080
-  address: ${SERVER_ADDRESS:0.0.0.0}
+  # 같은 서버의 Caddy(127.0.0.1:8080)만 접근. 외부에서 8080 직접 접속 차단
+  address: ${SERVER_ADDRESS:127.0.0.1}
   tomcat:
     threads:
       max: 200
@@ -27,3 +28,5 @@ spring:
 
 formlimpic:
   journal: ${JOURNAL_PATH:./data/receipts.log}
+  # 부하 테스트용 레이트리밋 우회 토큰. 비어 있으면 우회 기능 비활성화
+  loadtest-bypass-token: ${FORMLIMPIC_LOADTEST_BYPASS:}

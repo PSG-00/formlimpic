@@ -17,10 +17,12 @@ export const options = {
 };
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:8080/api';
+// 서버의 FORMLIMPIC_LOADTEST_BYPASS(또는 loadtest_bypass.token)와 같은 값: k6 run -e BYPASS_TOKEN=... loadtest.js
+const BYPASS_TOKEN = __ENV.BYPASS_TOKEN || '';
 const HEADERS = {
   'Content-Type': 'application/json',
   'X-Formlimpic': 'formlimpic',
-  'X-Formlimpic-Bypass': 'formlimpic-loadtest-pass',
+  'X-Formlimpic-Bypass': BYPASS_TOKEN,
   'X-Forwarded-For': '192.168.1.1',
 };
 
@@ -89,7 +91,7 @@ export default function (data) {
   const vuHeaders = {
     'Content-Type': 'application/json',
     'X-Formlimpic': 'formlimpic',
-    'X-Formlimpic-Bypass': 'formlimpic-loadtest-pass',
+    'X-Formlimpic-Bypass': BYPASS_TOKEN,
     'X-Forwarded-For': ip,
   };
 

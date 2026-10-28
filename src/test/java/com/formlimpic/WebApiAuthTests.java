@@ -124,7 +124,7 @@ class WebApiAuthTests {
         BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
         DiscordWebhookService discordService = new DiscordWebhookService(store);
         WebApi api = new WebApi(store, encoder, discordService);
-        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(api).addFilters(new RateLimitFilter()).build();
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(api).addFilters(new RateLimitFilter("")).build();
 
         String clientIp = "192.168.1.100";
         boolean rateLimited = false;

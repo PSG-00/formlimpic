@@ -345,7 +345,8 @@ c:\Project\spring\formlimpic
 - **개인정보 격리**: 결과 조회 API(`GET /forms/{id}/results`)에서 전화번호, 생년월일, 버블 정보를 완전히 배제한 경량 `Row` DTO 반환.
 
 ### 3) [`RateLimitFilter.java`](file:///c:/Project/spring/formlimpic/src/main/java/com/formlimpic/RateLimitFilter.java) — 디도스 및 매크로 연타 차단
-- Caddy(`X-Real-IP`, `X-Forwarded-For` 마지막 IP), Cloudflare(`CF-Connecting-IP`), `remoteAddr` 기준 IP 스푸핑 방지 및 안전한 실제 IP 추출.
+- 같은 서버의 Caddy(루프백)를 거친 요청에서만 `X-Real-IP`(Caddy가 `{remote_host}`로 덮어씀) → `X-Forwarded-For` 마지막 IP → `CF-Connecting-IP` 순으로 신뢰하고, 그 외 요청은 `remoteAddr`를 그대로 사용해 헤더 위조 차단. 톰캣은 `127.0.0.1:8080`에만 바인딩.
+- 부하 테스트용 우회 헤더(`X-Formlimpic-Bypass`)는 서버에 `FORMLIMPIC_LOADTEST_BYPASS`(또는 `loadtest_bypass.token` 파일)가 설정된 경우에만 동작.
 - 동일 IP 기준 **초당 15회 초과 시 즉시 HTTP 429 Too Many Requests 반환**.
 - 정각 선착순 광클(초당 1~2회)은 정상 통과하고, 매크로 봇의 1,000연타 공격은 입구에서 컷.
 
@@ -544,7 +545,8 @@ docker compose up -d --wait
 ### 3) k6 기반 1,000명 동시 제출 부하 테스트 실행
 새로운 터미널 창을 열고 아래 명령어를 입력합니다:
 ```powershell
-k6 run loadtest.js
+$env:FORMLIMPIC_LOADTEST_BYPASS = "my-local-token"   # 서버 실행 전에 설정 (레이트리밋 우회)
+k6 run -e BYPASS_TOKEN=my-local-token loadtest.js
 ```
 - 0~15초: 1,000명의 가상 사용자가 순차 가입 및 티켓 발급.
 - 15~25초: 정각 카운트다운 대기.
@@ -559,5 +561,5 @@ k6 run loadtest.js
   - `main` 브랜치에 코드 push 시 Linux 환경(`ubuntu-latest`)에서 `./gradlew build` 및 전체 단위 테스트를 선행 검증 (CI).
   - 빌드/테스트 100% 통과 시에만 GCP VM(`e2-highcpu-4`)으로 SSH 접속하여 `./start.sh` 원클릭 자동 배포 수행 (CD).
 - **실시간 디스코드 배포 알림**:
-  - 배포 완료 시 새로 발급된 Cloudflare Tunnel 공식 도메인과 갱신된 관리자 일회성 비밀번호를 등록된 디스코드 웹훅으로 자동 전송.
+  - 배포 완료 시 접속 주소(`https://formlimpic.rescene.online`, Caddy → `127.0.0.1:8080`)와 갱신된 관리자 일회성 비밀번호를 등록된 디스코드 웹훅으로 자동 전송.
 

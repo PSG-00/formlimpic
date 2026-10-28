@@ -2,6 +2,7 @@ package com.formlimpic;
 
 import jakarta.servlet.*;
 import jakarta.servlet.http.*;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
@@ -46,6 +47,11 @@ public class RateLimitFilter implements Filter {
     private final ConcurrentHashMap<String, MinuteCounter> minuteCounters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Long> bannedUntil = new ConcurrentHashMap<>();
     private long lastCleanUp = System.currentTimeMillis();
+    private final String bypassToken;
+
+    public RateLimitFilter(@Value("${formlimpic.loadtest-bypass-token:}") String bypassToken) {
+        this.bypassToken = bypassToken == null ? "" : bypassToken.trim();
+    }
 
     @Override
     public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
@@ -61,8 +67,8 @@ public class RateLimitFilter implements Filter {
             return;
         }
 
-        // Allow load-test bypass with designated secret header
-        if ("formlimpic-loadtest-pass".equals(req.getHeader("X-Formlimpic-Bypass"))) {
+        // Load-test bypass: only when FORMLIMPIC_LOADTEST_BYPASS is configured on the server
+        if (!bypassToken.isEmpty() && bypassToken.equals(req.getHeader("X-Formlimpic-Bypass"))) {
             chain.doFilter(request, response);
             return;
         }
@@ -136,26 +142,37 @@ public class RateLimitFilter implements Filter {
     }
 
     String resolveClientIp(HttpServletRequest req) {
-        // 1. Caddy 등의 리버스 프록시가 직접 검증하여 주입한 실제 공인 IP (위조 불가)
+        String remoteAddr = req.getRemoteAddr();
+
+        // 0. 프록시 헤더는 같은 서버의 Caddy(루프백)를 거친 요청에서만 신뢰
+        //    (외부에서 8080으로 직접 들어온 요청은 헤더를 마음대로 넣을 수 있으므로 소켓 주소 사용)
+        if (!isLoopback(remoteAddr)) {
+            return remoteAddr;
+        }
+
+        // 1. Caddy가 header_up X-Real-IP {remote_host} 로 덮어쓴 실제 접속 IP
         String realIp = req.getHeader("X-Real-IP");
         if (realIp != null && !realIp.isBlank()) {
             return realIp.trim();
         }
 
         // 2. X-Forwarded-For: 단일 리버스 프록시(Caddy) 뒤에서는 프록시가 가장 마지막에 덧붙인 IP가 실제 접속자 IP
-        //    (클라이언트가 헤더에 가짜 IP를 임의로 조작해 보낸 스푸핑 방지)
         String xff = req.getHeader("X-Forwarded-For");
         if (xff != null && !xff.isBlank()) {
             int lastComma = xff.lastIndexOf(',');
             return (lastComma != -1 ? xff.substring(lastComma + 1) : xff).trim();
         }
 
-        // 3. Cloudflare 프록시 환경 폴백 (X-Real-IP 및 XFF가 없을 경우)
+        // 3. CF-Connecting-IP 폴백 (Caddy도 {remote_host}로 덮어씀)
         String cfIp = req.getHeader("CF-Connecting-IP");
         if (cfIp != null && !cfIp.isBlank()) {
             return cfIp.trim();
         }
 
-        return req.getRemoteAddr();
+        return remoteAddr;
+    }
+
+    private static boolean isLoopback(String addr) {
+        return addr != null && (addr.startsWith("127.") || addr.equals("::1") || addr.equals("0:0:0:0:0:0:0:1"));
     }
 }

@@ -45,3 +45,4 @@ cloudflared.exe
 *.sql
 *.log
 deploy_webhook.url
+loadtest_bypass.token
