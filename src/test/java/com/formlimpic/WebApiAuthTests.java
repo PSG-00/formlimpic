@@ -443,4 +443,39 @@ class WebApiAuthTests {
                 .andExpect(jsonPath("$.title").value("사칭 시도 폼"))
                 .andExpect(jsonPath("$.adminCreated").value(false)); // Forced false by server!
     }
+
+    @Test
+    void loginBurstBeyondTheHashingQueueIsTurnedAwayInsteadOfHoldingThreads() throws Exception {
+        ReceiptStore store = new ReceiptStore(dir.resolve("burst_journal"), Clock.systemUTC());
+        store.registerUser("burst", "hash");
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger hashing = new java.util.concurrent.atomic.AtomicInteger();
+        org.springframework.security.crypto.password.PasswordEncoder slow = new org.springframework.security.crypto.password.PasswordEncoder() {
+            public String encode(CharSequence raw) { return "hash"; }
+            public boolean matches(CharSequence raw, String encoded) {
+                hashing.incrementAndGet();
+                try { release.await(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                return true;
+            }
+        };
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(new WebApi(store, slow, new DiscordWebhookService(store))).build();
+        var login = post("/api/auth/login").header("X-Formlimpic", "formlimpic")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"username\":\"burst\",\"password\":\"secret123\"}");
+
+        int admitted = WebApi.PASSWORD_WORKERS + WebApi.PASSWORD_MAX_WAITING;
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(admitted);
+        List<java.util.concurrent.Future<Integer>> waiting = new java.util.ArrayList<>();
+        for (int i = 0; i < admitted; i++) waiting.add(pool.submit(() -> mockMvc.perform(login).andReturn().getResponse().getStatus()));
+        long deadline = System.currentTimeMillis() + 5000;
+        while (hashing.get() < WebApi.PASSWORD_WORKERS && System.currentTimeMillis() < deadline) Thread.sleep(10);
+        Thread.sleep(200); // let the rest reach the queue
+        assertEquals(WebApi.PASSWORD_WORKERS, hashing.get(), "only the permitted number hash at once");
+
+        mockMvc.perform(login).andExpect(status().isServiceUnavailable());
+
+        release.countDown();
+        for (var f : waiting) assertEquals(200, f.get(10, java.util.concurrent.TimeUnit.SECONDS));
+        pool.shutdown();
+        store.close();
+    }
 }

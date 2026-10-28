@@ -44,6 +44,31 @@ public class WebApi {
 
     private final ArchivedResults archive;
 
+    // BCrypt 한 번에 수십 ms의 CPU를 쓴다. 오픈 직전 로그인이 몰려도 접수 처리할 코어와 Tomcat 스레드가 남도록
+    // 동시에 해시하는 수와 기다리는 수를 제한하고, 넘치면 바로 503으로 돌려보낸다
+    static final int PASSWORD_WORKERS = Math.max(1, Runtime.getRuntime().availableProcessors() / 2);
+    static final int PASSWORD_MAX_WAITING = 32;
+    private final java.util.concurrent.Semaphore passwordPermits = new java.util.concurrent.Semaphore(PASSWORD_WORKERS, true);
+    private final java.util.concurrent.atomic.AtomicInteger passwordRequests = new java.util.concurrent.atomic.AtomicInteger();
+
+    private <T> T passwordWork(java.util.function.Supplier<T> work) {
+        String busy = "로그인 요청이 몰려 있습니다. 잠시 후 다시 시도해주세요.";
+        try {
+            if (passwordRequests.incrementAndGet() > PASSWORD_WORKERS + PASSWORD_MAX_WAITING) throw new IllegalStateException(busy);
+            if (!passwordPermits.tryAcquire(3, TimeUnit.SECONDS)) throw new IllegalStateException(busy);
+            try {
+                return work.get();
+            } finally {
+                passwordPermits.release();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(busy);
+        } finally {
+            passwordRequests.decrementAndGet();
+        }
+    }
+
     WebApi(ReceiptStore store, PasswordEncoder encoder, DiscordWebhookService discordService) {
         this(store, encoder, discordService, null);
     }
@@ -136,7 +161,7 @@ public class WebApi {
         if (req.password() == null || req.password().length() < 6 || req.password().length() > 50) {
             throw new IllegalArgumentException("비밀번호는 6~50자 사이여야 합니다.");
         }
-        ReceiptStore.User user = store.registerUser(req.username().trim(), encoder.encode(req.password()));
+        ReceiptStore.User user = store.registerUser(req.username().trim(), passwordWork(() -> encoder.encode(req.password())));
         UserProfile profile = new UserProfile(user.id(), user.username(), user.membershipCode(), user.discordWebhookUrl(), user.role());
         session.setAttribute("auth_user", profile);
         return Map.of("user", profile);
@@ -147,7 +172,7 @@ public class WebApi {
         if (req.username() == null || req.password() == null) throw new IllegalArgumentException("아이디와 비밀번호를 입력해주세요.");
         ReceiptStore.User user = store.findUserByUsername(req.username().trim())
                 .orElseThrow(() -> new IllegalArgumentException("아이디 또는 비밀번호가 일치하지 않습니다."));
-        if (!encoder.matches(req.password(), user.passwordHash())) {
+        if (!passwordWork(() -> encoder.matches(req.password(), user.passwordHash()))) {
             throw new IllegalArgumentException("아이디 또는 비밀번호가 일치하지 않습니다.");
         }
         UserProfile profile = new UserProfile(user.id(), user.username(), user.membershipCode(), user.discordWebhookUrl(), user.role());

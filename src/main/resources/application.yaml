@@ -19,6 +19,11 @@ server:
 spring:
   application:
     name: formlimpic
+  task:
+    scheduling:
+      # 기본 1개면 DB 반영(장애 시 수 초씩 막힘)과 결과 알림 확인이 서로를 기다림
+      pool:
+        size: 2
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/formlimpic}
     username: ${DB_USERNAME:formlimpic}
