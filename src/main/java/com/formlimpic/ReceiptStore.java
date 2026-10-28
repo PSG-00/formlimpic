@@ -68,6 +68,9 @@ public final class ReceiptStore implements AutoCloseable {
     private final Map<String, Receipt> receipts = new HashMap<>();
     private final Map<String, List<Receipt>> receiptsByForm = new HashMap<>();
     private final Map<String, List<Ticket>> ticketsByOwner = new HashMap<>();
+    private final Map<String, List<Ticket>> ticketsByForm = new HashMap<>();
+    private final Map<String, Long> lastSequenceByForm = new HashMap<>(); // last ticket/receipt event of a form
+    private final Set<String> archivedFormIds = ConcurrentHashMap.newKeySet();
     private final ConcurrentHashMap<String, Ranking> rankings = new ConcurrentHashMap<>();
     private volatile boolean adminOnlyFormCreation = false;
     private static final Event POISON_PILL = new Event(-1L, new Properties());
@@ -102,7 +105,35 @@ public final class ReceiptStore implements AutoCloseable {
         flusherThread.setDaemon(true);
         flusherThread.start();
     }
+    private static final byte[] ARCHIVED_MARKER = "type=form_archived".getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
+    /** First pass: forms archived anywhere in the journal, so replay never loads their submissions. */
+    private Set<String> scanArchivedForms() throws IOException {
+        Set<String> ids = new HashSet<>();
+        long pos = 0, size = channel.size();
+        while (size - pos >= 8) {
+            ByteBuffer header = ByteBuffer.allocate(8); readAt(header, pos); header.flip();
+            int length = header.getInt();
+            if (length < 1 || length > 1_000_000 || size - pos - 8 < length) break; // the real pass reports corruption
+            ByteBuffer body = ByteBuffer.allocate(length); readAt(body, pos + 8);
+            if (contains(body.array(), ARCHIVED_MARKER)) {
+                Properties p = new Properties(); p.load(new ByteArrayInputStream(body.array()));
+                if ("form_archived".equals(p.getProperty("type"))) ids.add(p.getProperty("id"));
+            }
+            pos += 8 + length;
+        }
+        return ids;
+    }
+    private static boolean contains(byte[] data, byte[] needle) {
+        outer:
+        for (int i = 0; i + needle.length <= data.length; i++) {
+            for (int j = 0; j < needle.length; j++) if (data[i + j] != needle[j]) continue outer;
+            return true;
+        }
+        return false;
+    }
     private void recover() throws IOException {
+        archivedFormIds.addAll(scanArchivedForms());
+        channel.position(0);
         long good = 0;
         String corrupt = null;
         while (channel.position() < channel.size()) {
@@ -314,23 +345,13 @@ public final class ReceiptStore implements AutoCloseable {
             case "form_deleted" -> {
                 forms.remove(id);
                 notifiedFormIds.remove(id);
-                receiptsByForm.remove(id);
-                rankings.remove(id);
-                List<String> toRemove = new ArrayList<>();
-                for (Ticket t : tickets.values()) {
-                    if (t.formId().equals(id)) {
-                        toRemove.add(t.id());
-                    }
-                }
-                for (String tid : toRemove) {
-                    Ticket t = tickets.remove(tid);
-                    if (t != null) {
-                        ticketsByFormAndOwner.remove(t.formId() + "\0" + t.owner());
-                        List<Ticket> owned = ticketsByOwner.get(t.owner());
-                        if (owned != null) owned.remove(t);
-                    }
-                    receipts.remove(tid);
-                }
+                archivedFormIds.remove(id);
+                evictSubmissions(id);
+            }
+            // Finished form whose submissions are in PostgreSQL: drop them from memory (results are read from the DB)
+            case "form_archived" -> {
+                archivedFormIds.add(id);
+                evictSubmissions(id);
             }
             case "setting" -> {
                 if ("adminOnlyFormCreation".equals(p.getProperty("key"))) {
@@ -338,6 +359,8 @@ public final class ReceiptStore implements AutoCloseable {
                 }
             }
             case "ticket" -> {
+                if (archivedFormIds.contains(p.getProperty("form"))) return; // replay: already archived later in the journal
+                lastSequenceByForm.put(p.getProperty("form"), e.sequence());
                 // Reuse the form/user strings already in memory instead of one parsed copy per ticket
                 Form f = forms.get(p.getProperty("form"));
                 User u = usersById.get(p.getProperty("owner"));
@@ -347,14 +370,31 @@ public final class ReceiptStore implements AutoCloseable {
                 tickets.put(id, t);
                 ticketsByFormAndOwner.put(t.formId() + "\0" + t.owner(), t);
                 ticketsByOwner.computeIfAbsent(t.owner(), k -> new ArrayList<>()).add(t);
+                ticketsByForm.computeIfAbsent(t.formId(), k -> new ArrayList<>()).add(t);
             }
             case "receipt" -> {
+                if (archivedFormIds.contains(p.getProperty("form"))) return;
+                lastSequenceByForm.put(p.getProperty("form"), e.sequence());
                 Ticket t = tickets.get(p.getProperty("ticket"));
                 Receipt r = new Receipt(id, t != null ? t.formId() : p.getProperty("form"), t != null ? t.id() : p.getProperty("ticket"), p.getProperty("name"), p.getProperty("birthDate", ""), p.getProperty("phone"), p.getProperty("bubble", ""), t != null ? t.code() : p.getProperty("code"), Instant.parse(p.getProperty("time")), e.sequence(), Boolean.parseBoolean(p.getProperty("early")));
                 receipts.put(r.ticketId(), r);
                 receiptsByForm.computeIfAbsent(r.formId(), k -> new ArrayList<>()).add(r);
             }
             default -> throw new IllegalStateException("Unknown journal event");
+        }
+    }
+    private void evictSubmissions(String formId) {
+        receiptsByForm.remove(formId);
+        rankings.remove(formId);
+        lastSequenceByForm.remove(formId);
+        List<Ticket> formTickets = ticketsByForm.remove(formId);
+        if (formTickets == null) return;
+        for (Ticket t : formTickets) {
+            tickets.remove(t.id());
+            ticketsByFormAndOwner.remove(t.formId() + "\0" + t.owner());
+            List<Ticket> owned = ticketsByOwner.get(t.owner());
+            if (owned != null && owned.remove(t) && owned.isEmpty()) ticketsByOwner.remove(t.owner());
+            receipts.remove(t.id());
         }
     }
     // Writes: public methods wait for the disk outside the lock; the *Locked variants do the in-memory work.
@@ -372,6 +412,25 @@ public final class ReceiptStore implements AutoCloseable {
     }
     public User updateWebhook(String userId, String webhookUrl) { return durable(() -> updateWebhookLocked(userId, webhookUrl)); }
     public void markFormNotified(String formId) { durable(() -> { markFormNotifiedLocked(formId); return null; }); }
+    public void archiveForm(String formId) { durable(() -> { archiveFormLocked(formId); return null; }); }
+
+    public boolean isArchived(String formId) { return archivedFormIds.contains(formId); }
+    public record ArchiveCandidate(String formId, long lastSequence, int receipts) {}
+    /** Notified forms still held in memory whose results were published before the cutoff. */
+    public synchronized List<ArchiveCandidate> archiveCandidates(Instant resultsBefore) {
+        List<ArchiveCandidate> list = new ArrayList<>();
+        for (Form f : forms.values()) {
+            if (!ticketsByForm.containsKey(f.id()) || !notifiedFormIds.contains(f.id()) || resultsAt(f).isAfter(resultsBefore)) continue;
+            list.add(new ArchiveCandidate(f.id(), lastSequenceByForm.getOrDefault(f.id(), 0L), receiptsByForm.getOrDefault(f.id(), List.of()).size()));
+        }
+        return list;
+    }
+    private synchronized void archiveFormLocked(String formId) {
+        Form f = form(formId);
+        if (archivedFormIds.contains(formId)) return;
+        if (now().isBefore(resultsAt(f))) throw new IllegalStateException("진행 중인 폼림픽은 보관할 수 없습니다.");
+        append(props("type", "form_archived", "id", formId));
+    }
 
     private synchronized User registerUserLocked(String username, String passwordHash) {
         username = text(username, 30);
@@ -489,6 +548,7 @@ public final class ReceiptStore implements AutoCloseable {
     public List<Receipt> results(String formId) { return ranking(formId).receipts(); }
     /** Computed once per form after resultsAt (nothing can be admitted any more), then served without the store lock. */
     public Ranking ranking(String formId) {
+        if (archivedFormIds.contains(formId)) throw new IllegalStateException("보관된 폼림픽은 데이터베이스에서 조회합니다.");
         Ranking cached = rankings.get(formId);
         if (cached != null) return cached;
         synchronized (this) {

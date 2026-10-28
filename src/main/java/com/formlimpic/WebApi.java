@@ -2,6 +2,7 @@ package com.formlimpic;
 
 import jakarta.annotation.PreDestroy;
 import jakarta.servlet.http.*;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.*;
 import org.springframework.http.*;
@@ -41,10 +42,30 @@ public class WebApi {
         return t;
     });
 
+    private final ArchivedResults archive;
+
     WebApi(ReceiptStore store, PasswordEncoder encoder, DiscordWebhookService discordService) {
+        this(store, encoder, discordService, null);
+    }
+
+    @Autowired
+    WebApi(ReceiptStore store, PasswordEncoder encoder, DiscordWebhookService discordService, ArchivedResults archive) {
         this.store = store;
         this.encoder = encoder;
         this.discordService = discordService;
+        this.archive = archive;
+    }
+
+    // Finished forms are archived after a day: their submissions live only in PostgreSQL
+    private ArchivedResults archive() {
+        if (archive == null) throw new IllegalStateException("보관된 결과를 불러올 수 없습니다.");
+        return archive;
+    }
+    private ReceiptStore.Ranking rankingFor(String formId) {
+        return store.isArchived(formId) ? archive().ranking(formId) : store.ranking(formId);
+    }
+    private ReceiptStore.Receipt mineFor(String formId, String owner) {
+        return store.isArchived(formId) ? archive().mine(formId, owner) : store.mine(formId, owner);
     }
 
     record NewForm(String title, String content, Instant startsAt, Instant expiresAt, Boolean hasBubble, Boolean hasDelay) {}
@@ -192,7 +213,10 @@ public class WebApi {
     @GetMapping("/my/submissions")
     Object mySubmissions(HttpServletRequest req) {
         UserProfile user = requireUser(req);
-        return Map.of("submissions", store.mySubmissions(user.id()));
+        List<ReceiptStore.SubmissionSummary> list = new ArrayList<>(store.mySubmissions(user.id()));
+        if (archive != null) list.addAll(archive.mySubmissions(user.id()));
+        list.sort((a, b) -> b.receipt().receivedAt().compareTo(a.receipt().receivedAt()));
+        return Map.of("submissions", list);
     }
 
     @GetMapping("/forms") Object list(HttpServletRequest req, HttpServletResponse res) {
@@ -233,7 +257,7 @@ public class WebApi {
 
     @GetMapping("/forms/{id}") Object detail(@PathVariable String id, HttpServletRequest req, HttpServletResponse res) {
         ReceiptStore.Form form = store.form(id);
-        Map<String, Object> data = new HashMap<>(); data.put("form", form); data.put("serverTime", store.now()); data.put("mine", store.mine(id, owner(req, res)));
+        Map<String, Object> data = new HashMap<>(); data.put("form", form); data.put("serverTime", store.now()); data.put("mine", mineFor(id, owner(req, res)));
         data.put("resultsAt", ReceiptStore.resultsAt(form));
         return data;
     }
@@ -324,7 +348,7 @@ public class WebApi {
 
     /** Full list (kept for pages that still run the previous app.js). */
     @GetMapping("/forms/{id}/results") Object results(@PathVariable String id) {
-        List<ReceiptStore.Receipt> ranked = store.results(id);
+        List<ReceiptStore.Receipt> ranked = rankingFor(id).receipts();
         List<Row> rows = new ArrayList<>(ranked.size());
         for (ReceiptStore.Receipt r : ranked) rows.add(row(rows.size() + 1, r));
         return rows;
@@ -333,7 +357,7 @@ public class WebApi {
     /** One page of the final ranking plus the caller's own row, so every open page does not pull all rows at once. */
     @GetMapping("/forms/{id}/ranking")
     Object ranking(@PathVariable String id, @RequestParam(defaultValue = "0") int offset, @RequestParam(defaultValue = "100") int limit, HttpServletRequest req) {
-        ReceiptStore.Ranking ranking = store.ranking(id);
+        ReceiptStore.Ranking ranking = rankingFor(id);
         List<ReceiptStore.Receipt> ranked = ranking.receipts();
         int from = Math.max(0, Math.min(offset, ranked.size()));
         int to = Math.min(ranked.size(), from + Math.max(1, Math.min(limit, 500)));
@@ -341,7 +365,7 @@ public class WebApi {
         for (int i = from; i < to; i++) rows.add(row(i + 1, ranked.get(i)));
         Row mine = null;
         UserProfile user = current(req);
-        ReceiptStore.Receipt receipt = user != null ? store.mine(id, user.id()) : null;
+        ReceiptStore.Receipt receipt = user != null ? mineFor(id, user.id()) : null;
         Integer rank = receipt != null ? ranking.rankByTicket().get(receipt.ticketId()) : null;
         if (rank != null) mine = row(rank, ranked.get(rank - 1));
         return new RankingPage(ranked.size(), from, rows, mine);
@@ -349,4 +373,7 @@ public class WebApi {
 
     @ExceptionHandler(IllegalArgumentException.class) ResponseEntity<?> bad(IllegalArgumentException e) { return ResponseEntity.badRequest().body(Map.of("message", e.getMessage())); }
     @ExceptionHandler(IllegalStateException.class) ResponseEntity<?> unavailable(IllegalStateException e) { return ResponseEntity.status(503).body(Map.of("message", e.getMessage())); }
+    @ExceptionHandler(org.springframework.dao.DataAccessException.class) ResponseEntity<?> archiveUnavailable(org.springframework.dao.DataAccessException e) {
+        return ResponseEntity.status(503).body(Map.of("message", "보관된 결과를 불러오지 못했습니다. 잠시 후 다시 시도하세요."));
+    }
 }

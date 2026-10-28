@@ -574,4 +574,8 @@ k6 run -e BYPASS_TOKEN=my-local-token loadtest.js
   - PostgreSQL은 저널을 1,000건 단위 트랜잭션으로 따라가는 사본이며, 진행 위치는 `projection_state`, DB가 거부한 이벤트는 `projection_failures`에 남습니다.
   - 저널이 깨져 기동이 안 되면 `formlimpic.env`에 `JOURNAL_REPAIR_TAIL=true`를 넣고 한 번 재시작합니다(원본은 `receipts.log.corrupt-<시각>`으로 보관). 복구 후 이 줄은 지웁니다.
   - 저널과 DB 볼륨은 같은 VM 디스크에 있으므로, 디스크 스냅샷 일정이나 저널 외부 백업을 따로 걸어둡니다.
+- **마감된 폼 보관 (메모리 상한)**:
+  - 결과 공개 후 하루(`ARCHIVE_AFTER`, 기본 `P1D`)가 지나고 디스코드 알림까지 끝난 폼은, PostgreSQL에 모든 접수가 반영된 것을 개수로 확인한 뒤 메모리에서 내립니다(`form_archived` 저널 이벤트).
+  - 보관된 폼의 결과·나의 답변·마이페이지 순위는 PostgreSQL에서 조회합니다. 재기동 시에도 보관된 폼의 접수는 메모리에 올리지 않습니다.
+  - DB가 내려가 있으면 보관된 폼 조회만 503이 되고, 진행 중인 폼에는 영향이 없습니다.
 

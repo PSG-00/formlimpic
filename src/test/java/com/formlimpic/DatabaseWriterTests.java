@@ -9,6 +9,7 @@ import org.springframework.transaction.TransactionStatus;
 import java.nio.file.Path;
 import java.time.*;
 import java.util.List;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 import static org.mockito.ArgumentMatchers.*;
 
@@ -49,6 +50,27 @@ class DatabaseWriterTests {
             verify(jdbc).update(startsWith("INSERT INTO projection_state"), eq(2L));
             writer.flush();
             verify(jdbc, times(3)).update(startsWith("INSERT INTO forms"), any(Object[].class)); // nothing left to retry
+        }
+    }
+
+    @Test void archivesFinishedFormOnlyWhenPostgresHasEverySubmission() throws Exception {
+        ReceiptStoreTests.TestClock clock = new ReceiptStoreTests.TestClock();
+        try (ReceiptStore store = new ReceiptStore(dir.resolve("journal"), clock)) {
+            var u = store.registerUser("writer", "hash");
+            var f = store.create("done", "c", clock.value.plusSeconds(60), clock.value.plusSeconds(120));
+            clock.value = f.startsAt();
+            store.ticket(f.id(), u.id());
+            store.submit(f.id(), u.id(), "A", "010");
+            clock.value = ReceiptStore.resultsAt(f).plusSeconds(10);
+            store.markFormNotified(f.id());
+            JdbcTemplate jdbc = mock(JdbcTemplate.class);
+            when(jdbc.queryForObject(startsWith("SELECT count(*) FROM submissions"), eq(Integer.class), any(Object[].class))).thenReturn(0, 1);
+
+            new DatabaseWriter(store, jdbc, manager(), Duration.ZERO).flush();
+            assertFalse(store.isArchived(f.id()), "PostgreSQL is missing a submission");
+            new DatabaseWriter(store, jdbc, manager(), Duration.ZERO).flush();
+            assertTrue(store.isArchived(f.id()));
+            assertNull(store.mine(f.id(), u.id()));
         }
     }
 

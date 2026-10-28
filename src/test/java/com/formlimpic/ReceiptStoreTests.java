@@ -136,6 +136,37 @@ class ReceiptStoreTests {
             assertEquals(List.of("two", "three"), restored.durableEventsAfter(2, 1000).stream().map(e -> e.values().getProperty("title")).toList());
         }
     }
+    @Test void archivedFormSubmissionsLeaveMemoryAndStayOutOnReplay() throws Exception {
+        TestClock clock = new TestClock(); Path p = dir.resolve("archive_journal"); String id;
+        try (ReceiptStore s = new ReceiptStore(p, clock)) {
+            var u = s.registerUser("archived_user", "hash");
+            var f = s.create("old", "c", clock.value.plusSeconds(60), clock.value.plusSeconds(120)); id = f.id();
+            var live = s.create("live", "c", clock.value.plusSeconds(60), clock.value.plusSeconds(3600));
+            clock.value = f.startsAt();
+            s.ticket(id, u.id()); s.submit(id, u.id(), "A", "010");
+            s.ticket(live.id(), u.id()); s.submit(live.id(), u.id(), "A", "010");
+            clock.value = ReceiptStore.resultsAt(f);
+            assertTrue(s.archiveCandidates(clock.value).isEmpty(), "not notified yet");
+            s.markFormNotified(id);
+            var candidates = s.archiveCandidates(clock.value);
+            assertEquals(List.of(id), candidates.stream().map(ReceiptStore.ArchiveCandidate::formId).toList());
+            assertEquals(1, candidates.get(0).receipts());
+
+            s.archiveForm(id);
+            assertTrue(s.isArchived(id));
+            assertNull(s.mine(id, u.id()));
+            assertThrows(IllegalStateException.class, () -> s.ranking(id));
+            assertEquals(List.of("live"), s.mySubmissions(u.id()).stream().map(x -> x.form().title()).toList());
+            assertNotNull(s.mine(live.id(), u.id()), "other forms untouched");
+            assertThrows(IllegalStateException.class, () -> s.archiveForm(live.id()), "running forms cannot be archived");
+        }
+        try (ReceiptStore restored = new ReceiptStore(p, clock)) {
+            assertTrue(restored.isArchived(id));
+            assertNull(restored.mine(id, restored.findUserByUsername("archived_user").orElseThrow().id()), "not loaded again on replay");
+            assertTrue(restored.archiveCandidates(clock.value.plusSeconds(86400)).isEmpty());
+            assertEquals("old", restored.form(id).title(), "form itself is kept");
+        }
+    }
     @Test void concurrentCodesAndReceiptsAreUnique() throws Exception {
         TestClock clock = new TestClock();
         try (ReceiptStore s = new ReceiptStore(dir.resolve("journal"), clock)) {

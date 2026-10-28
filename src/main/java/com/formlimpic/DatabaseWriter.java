@@ -1,6 +1,8 @@
 package com.formlimpic;
 
 import org.slf4j.*;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.*;
@@ -8,7 +10,9 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 import java.io.IOException;
+import java.time.Duration;
 import java.util.List;
+import java.util.UUID;
 import java.util.Properties;
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -26,7 +30,13 @@ public class DatabaseWriter {
     private Long cursor; // last projected journal sequence; loaded from projection_state
     private boolean initialized;
     private boolean outage;
-    DatabaseWriter(ReceiptStore store, JdbcTemplate jdbc, PlatformTransactionManager manager) { this.store = store; this.jdbc = jdbc; this.tx = new TransactionTemplate(manager); }
+    private final Duration archiveAfter;
+    private long lastArchiveCheck;
+    DatabaseWriter(ReceiptStore store, JdbcTemplate jdbc, PlatformTransactionManager manager) { this(store, jdbc, manager, Duration.ofDays(1)); }
+    @Autowired
+    DatabaseWriter(ReceiptStore store, JdbcTemplate jdbc, PlatformTransactionManager manager, @Value("${formlimpic.archive-after:P1D}") Duration archiveAfter) {
+        this.store = store; this.jdbc = jdbc; this.tx = new TransactionTemplate(manager); this.archiveAfter = archiveAfter;
+    }
     @Scheduled(fixedDelay = 1000, initialDelay = 1000)
     public void flush() {
         try {
@@ -58,8 +68,25 @@ public class DatabaseWriter {
                 saveBatch(batch);
                 cursor = batch.get(batch.size() - 1).sequence();
             }
+            if (System.currentTimeMillis() - lastArchiveCheck >= 60_000) {
+                lastArchiveCheck = System.currentTimeMillis();
+                archiveFinishedForms();
+            }
             if (outage) log.info("PostgreSQL projection resumed; durable journal retained"); outage = false;
         } catch (RuntimeException | IOException e) { cursor = null; if (!outage) log.warn("PostgreSQL unavailable; acknowledged receipts remain in journal and will be retried: {}", e.getClass().getSimpleName()); outage = true; }
+    }
+    /** Drop finished forms' submissions from memory once PostgreSQL holds every one of them. */
+    private void archiveFinishedForms() {
+        for (ReceiptStore.ArchiveCandidate c : store.archiveCandidates(store.now().minus(archiveAfter))) {
+            if (c.lastSequence() > cursor) continue; // not projected yet
+            Integer inDb = jdbc.queryForObject("SELECT count(*) FROM submissions WHERE form_id = ?", Integer.class, UUID.fromString(c.formId()));
+            if (inDb == null || inDb != c.receipts()) {
+                log.warn("Not archiving form {}: {} submissions in memory but {} in PostgreSQL", c.formId(), c.receipts(), inDb);
+                continue;
+            }
+            store.archiveForm(c.formId());
+            log.info("Archived form {} ({} submissions now served from PostgreSQL)", c.formId(), c.receipts());
+        }
     }
     private long loadCursor() {
         List<Long> rows = jdbc.queryForList("SELECT sequence FROM projection_state WHERE id = 1", Long.class);
@@ -101,7 +128,7 @@ public class DatabaseWriter {
             case "user" -> jdbc.update("INSERT INTO users (id, username, password_hash, membership_code, discord_webhook_url, role, created_at) VALUES (?::uuid, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role", p.getProperty("id"), p.getProperty("username"), p.getProperty("hash"), p.getProperty("code"), p.getProperty("webhook", ""), p.getProperty("role", "USER"), time(p, "time"));
             case "user_webhook" -> jdbc.update("UPDATE users SET discord_webhook_url = ? WHERE id = ?::uuid", p.getProperty("webhook"), p.getProperty("userId"));
             case "user_password" -> jdbc.update("UPDATE users SET password_hash = ? WHERE id = ?::uuid", p.getProperty("hash"), p.getProperty("userId"));
-            case "form_notified" -> {}
+            case "form_notified", "form_archived" -> {}
             case "form" -> {
                 String owner = p.getProperty("owner");
                 Object ownerId = (owner != null && owner.matches("[0-9a-f-]{36}")) ? java.util.UUID.fromString(owner) : null;
