@@ -145,17 +145,6 @@ public class WebApi {
         return u;
     }
 
-    private String owner(HttpServletRequest req, HttpServletResponse res) {
-        HttpSession session = req.getSession(false);
-        UserProfile u = current(session);
-        if (u != null) return u.id();
-        if (req.getCookies() != null) for (Cookie cookie : req.getCookies()) {
-            if (cookie.getName().equals("formlimpic_owner") && cookie.getValue().matches("[0-9a-f-]{36}")) return cookie.getValue();
-        }
-        String id = UUID.randomUUID().toString(); Cookie cookie = new Cookie("formlimpic_owner", id);
-        cookie.setHttpOnly(true); cookie.setSecure(req.isSecure()); cookie.setPath("/"); cookie.setMaxAge(31536000); cookie.setAttribute("SameSite", "Strict"); res.addCookie(cookie); return id;
-    }
-
     @PostMapping("/auth/signup")
     Object signup(@RequestBody AuthRequest req, HttpSession session) {
         if (req.username() == null || !req.username().trim().matches("^[a-zA-Z0-9_]{3,20}$")) {
@@ -250,8 +239,7 @@ public class WebApi {
         return Map.of("submissions", list);
     }
 
-    @GetMapping("/forms") Object list(HttpServletRequest req, HttpServletResponse res) {
-        owner(req, res);
+    @GetMapping("/forms") Object list() {
         return Map.of("forms", store.forms().stream().map(FormSummary::of).toList(), "serverTime", store.now(), "adminOnlyFormCreation", store.isAdminOnlyFormCreation());
     }
 
@@ -286,9 +274,9 @@ public class WebApi {
         return Map.of("adminOnlyFormCreation", store.isAdminOnlyFormCreation());
     }
 
-    @GetMapping("/forms/{id}") Object detail(@PathVariable String id, HttpServletRequest req, HttpServletResponse res) {
+    @GetMapping("/forms/{id}") Object detail(@PathVariable String id, HttpServletRequest req) {
         ReceiptStore.Form form = store.form(id);
-        Map<String, Object> data = new HashMap<>(); data.put("form", form); data.put("serverTime", store.now()); data.put("mine", mineFor(id, owner(req, res)));
+        Map<String, Object> data = new HashMap<>(); data.put("form", form); data.put("serverTime", store.now()); UserProfile user = current(req); data.put("mine", user == null ? null : mineFor(id, user.id()));
         data.put("resultsAt", ReceiptStore.resultsAt(form));
         return data;
     }

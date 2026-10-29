@@ -464,7 +464,8 @@ class WebApiAuthTests {
                 .andExpect(jsonPath("$.forms[0].title").value("목록 폼"))
                 .andExpect(jsonPath("$.forms[0].content").doesNotExist());
         mockMvc.perform(get("/api/forms/" + form.id()))
-                .andExpect(jsonPath("$.form.content").value("아주 긴 본문"));
+                .andExpect(jsonPath("$.form.content").value("아주 긴 본문"))
+                .andExpect(header().doesNotExist("Set-Cookie")); // visitors are no longer tagged with a guest cookie
         store.close();
     }
 

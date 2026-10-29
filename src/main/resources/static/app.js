@@ -226,7 +226,7 @@ function renderPrivacy() {
     <div class="panel privacy-panel">
       <a class="back" href="#">← 홈으로</a>
       <h1>개인정보처리방침</h1>
-      <div class="privacy-date">시행일자: 2026년 9월 24일 · 최종 수정일: 2026년 10월 6일</div>
+      <div class="privacy-date">시행일자: 2026년 9월 24일 · 최종 수정일: 2026년 10월 30일</div>
 
       <div class="privacy-notice-box">
         <strong>⚠️ [중요] 연습용 모의 데이터 입력 권장 안내</strong>
@@ -241,7 +241,7 @@ function renderPrivacy() {
           <li><strong>회원가입 및 계정 관리 (필수)</strong>: 아이디, 비밀번호(BCrypt 단방향 암호화 저장), 자동 발급 고유 멤버십 코드</li>
           <li><strong>알림 기능 (선택)</strong>: 디스코드 웹훅(Discord Webhook) URL (마이페이지에서 등록 시)</li>
           <li><strong>폼 신청 모의 연습 시 (연습용 가상 데이터 권장)</strong>: 이름, 생년월일, 연락처(전화번호), 버블 닉네임</li>
-          <li><strong>서비스 이용 과정에서 자동 생성·수집</strong>: 세션 쿠키(JSESSIONID), 비회원 식별 쿠키(formlimpic_owner), 접속 IP 주소, 신청 제출 일시(밀리초 단위)</li>
+          <li><strong>서비스 이용 과정에서 자동 생성·수집</strong>: 로그인 유지용 세션 쿠키(JSESSIONID), 접속 IP 주소(과도한 요청 차단에 사용), 신청 제출 일시(밀리초 단위)</li>
         </ul>
       </div>
 
@@ -251,14 +251,14 @@ function renderPrivacy() {
         <ul>
           <li><strong>회원 식별 및 로그인 유지</strong>: 계정 인증, 회원 전용 폼림픽 개설 및 마이페이지 신청 내역 관리</li>
           <li><strong>선착순 폼림픽 연습 결과 집계</strong>: 0.001초(밀리초) 단위 접수 순위 판정 및 결과표(순위·이름·멤버십코드) 출력</li>
-          <li><strong>실시간 알림 발송</strong>: 회원이 등록한 디스코드 웹훅 채널로 선착순 접수 성공 및 순위 알림 전송</li>
-          <li><strong>서비스 보안 및 부정 이용 방지</strong>: 매크로 및 비정상 트래픽 감지(Rate Limiting), 디도스(DDoS) 방어</li>
+          <li><strong>결과 알림 발송</strong>: 폼림픽 결과가 공개되면 회원이 등록한 디스코드 웹훅 채널로 최종 순위와 접수 기록 전송</li>
+          <li><strong>서비스 보안 및 부정 이용 방지</strong>: 매크로 및 비정상 트래픽 감지·차단(요청 횟수 제한)</li>
         </ul>
       </div>
 
       <div class="privacy-section">
         <h3>3. 개인정보의 처리위탁 및 국외 이전</h3>
-        <p>안정적인 인프라 운영 및 글로벌 트래픽 방어를 위해 아래 외부 클라우드 인프라를 이용하고 있습니다.</p>
+        <p>서비스 운영을 위해 아래 외부 서비스를 이용하고 있습니다.</p>
         <div class="table-wrap">
           <table class="privacy-table">
             <thead>
@@ -272,20 +272,14 @@ function renderPrivacy() {
             <tbody>
               <tr>
                 <td><strong>Google Cloud Platform (GCP)</strong></td>
-                <td>서버 호스팅 및 데이터베이스(PostgreSQL) 보관</td>
+                <td>서버 호스팅, 접수 기록 파일 및 데이터베이스(PostgreSQL) 보관</td>
                 <td>계정 정보, 폼 신청 데이터</td>
                 <td>대한민국 (서울 리전 asia-northeast3)</td>
               </tr>
               <tr>
-                <td><strong>Cloudflare, Inc.</strong></td>
-                <td>HTTPS 보안 암호화 통신, DDoS 및 비정상 트래픽 방어 (Tunnel)</td>
-                <td>접속 IP, 패킷 전송 데이터 (영구 미저장)</td>
-                <td>글로벌 네트워크 (미국 등)</td>
-              </tr>
-              <tr>
                 <td><strong>Discord, Inc.</strong></td>
-                <td>회원이 등록한 웹훅으로 신청 성공 알림 발송</td>
-                <td>신청 성공 순위 및 접수 안내 메시지</td>
+                <td>회원이 등록한 웹훅으로 결과 알림 발송</td>
+                <td>최종 순위, 폼 제목, 멤버십 코드, 접수 시각, 신청자 이름</td>
                 <td>미국 등 Discord 인프라</td>
               </tr>
             </tbody>
@@ -297,8 +291,8 @@ function renderPrivacy() {
         <h3>4. 개인정보의 보관 및 파기</h3>
         <p>원칙적으로 개인정보는 수집 목적이 달성되거나 탈퇴 시 지체 없이 파기합니다.</p>
         <ul>
-          <li><strong>회원 정보</strong>: 회원 탈퇴 또는 서비스 종료 시 데이터베이스에서 즉시 영구 삭제됩니다.</li>
-          <li><strong>폼 신청 기록</strong>: 폼 개설자가 해당 폼을 삭제하거나 관리자가 데이터베이스를 초기화할 때 영구 삭제됩니다.</li>
+          <li><strong>회원 정보</strong>: 회원 탈퇴(삭제 요청) 또는 서비스 종료 시 파기합니다. 디스코드 웹훅 URL은 마이페이지에서 언제든 직접 삭제할 수 있습니다.</li>
+          <li><strong>폼 신청 기록</strong>: 폼을 삭제하거나 삭제를 요청하시면 파기합니다. 서버 백업본에는 백업 보관 기간 동안 남아 있을 수 있습니다.</li>
           <li><strong>비밀번호 보안</strong>: 비밀번호는 복호화가 불가능한 강력한 단방향 해시 알고리즘(BCrypt)으로 암호화되어 저장되므로, 운영자 및 관리자를 포함한 그 누구도 원본 비밀번호를 열람할 수 없습니다.</li>
         </ul>
       </div>
@@ -311,8 +305,8 @@ function renderPrivacy() {
       <div class="privacy-section">
         <h3>6. 이용자의 권리와 행사 방법</h3>
         <ul>
-          <li>이용자는 언제든지 본인의 개인정보를 조회하거나 수정할 수 있습니다.</li>
-          <li>회원 탈퇴 및 저장된 데이터 삭제를 원하실 경우, 마이페이지 또는 아래 개인정보 문의처로 이메일을 보내주시면 지체 없이 처리해 드립니다.</li>
+          <li>이용자는 마이페이지에서 본인의 계정 정보와 참여 기록을 조회하고, 디스코드 웹훅 주소를 수정하거나 삭제할 수 있습니다.</li>
+          <li>회원 탈퇴 및 저장된 데이터 삭제를 원하실 경우, 아래 개인정보 문의처로 이메일을 보내주시면 지체 없이 처리해 드립니다.</li>
         </ul>
       </div>
 
@@ -320,17 +314,16 @@ function renderPrivacy() {
         <h3>7. 개인정보의 안전성 확보 조치</h3>
         <ul>
           <li><strong>비밀번호 암호화</strong>: 회원 비밀번호는 단방향 암호화(BCrypt)되어 저장 및 관리됩니다.</li>
-          <li><strong>전송 구간 암호화</strong>: SSL/TLS 인증서를 적용하여 모든 네트워크 통신(HTTPS)을 안전하게 암호화합니다.</li>
-          <li><strong>비정상 트래픽 및 매크로 방어</strong>: 다계층 Rate Limit 필터를 운용하여 비정상 광클 및 봇 트래픽을 자동 감지하고 차단합니다.</li>
-          <li><strong>접근 통제</strong>: 데이터베이스는 Docker 내부망에 격리되어 있어 외부 인터넷으로부터의 직접 접근이 원천 차단되어 있습니다.</li>
+          <li><strong>전송 구간 암호화</strong>: SSL/TLS 인증서를 적용하여 모든 네트워크 통신(HTTPS)을 암호화합니다. HTTP로 접속하면 HTTPS로 자동 전환됩니다.</li>
+          <li><strong>비정상 트래픽 및 매크로 방어</strong>: 요청 횟수 제한 필터를 운용하여 비정상 연타 및 봇 트래픽을 자동 감지하고 차단합니다.</li>
+          <li><strong>접근 통제</strong>: 애플리케이션과 데이터베이스는 서버 내부(로컬)에서만 접속할 수 있도록 설정되어 있어, 외부 인터넷에서 직접 접근할 수 없습니다.</li>
         </ul>
       </div>
 
       <div class="privacy-section">
         <h3>8. 인터넷 접속정보 및 쿠키(Cookie) 운용</h3>
         <ul>
-          <li><strong>세션 쿠키 (JSESSIONID)</strong>: 로그인 상태 유지 및 안전한 세션 관리를 위해 브라우저 메모리에 저장되며, 브라우저 종료 시 만료됩니다.</li>
-          <li><strong>비회원 식별 쿠키 (formlimpic_owner)</strong>: 비회원의 연습 편의 및 폼 식별을 위해 활용됩니다.</li>
+          <li><strong>세션 쿠키 (JSESSIONID)</strong>: 로그인 상태 유지 및 안전한 세션 관리를 위해 사용되며, 로그아웃하거나 일정 시간 사용하지 않으면 만료됩니다.</li>
           <li>이용자는 웹 브라우저의 옵션 설정을 통해 쿠키 저장을 거부할 수 있으나, 이 경우 로그인이 필요한 일부 서비스 이용에 제한이 있을 수 있습니다.</li>
         </ul>
       </div>
