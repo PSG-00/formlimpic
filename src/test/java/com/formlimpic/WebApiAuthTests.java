@@ -445,6 +445,30 @@ class WebApiAuthTests {
     }
 
     @Test
+    void formListsCarryNoBodyTextOrOwnerButDetailStillDoes() throws Exception {
+        ReceiptStore store = new ReceiptStore(dir.resolve("list_journal"), Clock.systemUTC());
+        var owner = store.registerUser("lister", "hash");
+        var form = store.create(owner.id(), "목록 폼", "아주 긴 본문", Instant.now().plusSeconds(60), Instant.now().plusSeconds(120), false, true);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(new WebApi(store, new BCryptPasswordEncoder(), new DiscordWebhookService(store))).build();
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute("auth_user", new WebApi.UserProfile(owner.id(), owner.username(), owner.membershipCode(), "", "USER"));
+
+        mockMvc.perform(get("/api/forms"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.forms[0].id").value(form.id()))
+                .andExpect(jsonPath("$.forms[0].title").value("목록 폼"))
+                .andExpect(jsonPath("$.forms[0].hasDelay").value(true))
+                .andExpect(jsonPath("$.forms[0].content").doesNotExist())
+                .andExpect(jsonPath("$.forms[0].owner").doesNotExist());
+        mockMvc.perform(get("/api/my/forms").session(session))
+                .andExpect(jsonPath("$.forms[0].title").value("목록 폼"))
+                .andExpect(jsonPath("$.forms[0].content").doesNotExist());
+        mockMvc.perform(get("/api/forms/" + form.id()))
+                .andExpect(jsonPath("$.form.content").value("아주 긴 본문"));
+        store.close();
+    }
+
+    @Test
     void loginBurstBeyondTheHashingQueueIsTurnedAwayInsteadOfHoldingThreads() throws Exception {
         ReceiptStore store = new ReceiptStore(dir.resolve("burst_journal"), Clock.systemUTC());
         store.registerUser("burst", "hash");

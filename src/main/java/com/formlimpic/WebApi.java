@@ -99,6 +99,12 @@ public class WebApi {
             this(name, "", phone, "");
         }
     }
+    /** What the list pages draw. The body text and owner id are only sent by the detail endpoint. */
+    record FormSummary(String id, String title, Instant startsAt, Instant expiresAt, boolean adminCreated, boolean hasDelay) {
+        static FormSummary of(ReceiptStore.Form f) {
+            return new FormSummary(f.id(), f.title(), f.startsAt(), f.expiresAt(), f.adminCreated(), f.hasDelay());
+        }
+    }
     record Row(int rank, String name, String membershipCode, Instant receivedAt, boolean early) {}
     record RankingPage(int total, int offset, List<Row> rows, Row mine) {}
     record AuthRequest(String username, String password) {}
@@ -232,7 +238,7 @@ public class WebApi {
     @GetMapping("/my/forms")
     Object myForms(HttpServletRequest req) {
         UserProfile user = requireUser(req);
-        return Map.of("forms", store.myForms(user.id()));
+        return Map.of("forms", store.myForms(user.id()).stream().map(FormSummary::of).toList());
     }
 
     @GetMapping("/my/submissions")
@@ -246,7 +252,7 @@ public class WebApi {
 
     @GetMapping("/forms") Object list(HttpServletRequest req, HttpServletResponse res) {
         owner(req, res);
-        return Map.of("forms", store.forms(), "serverTime", store.now(), "adminOnlyFormCreation", store.isAdminOnlyFormCreation());
+        return Map.of("forms", store.forms().stream().map(FormSummary::of).toList(), "serverTime", store.now(), "adminOnlyFormCreation", store.isAdminOnlyFormCreation());
     }
 
     @PostMapping("/forms")
