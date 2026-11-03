@@ -13,7 +13,7 @@ import java.util.*;
  */
 @Component
 public class ArchivedResults {
-    private static final String COLUMNS = "s.id, s.form_id, s.ticket_id, s.name, s.birth_date, s.phone, s.bubble, s.code, s.received_at, s.admission_sequence, s.early";
+    private static final String COLUMNS = "s.id, s.form_id, s.ticket_id, s.name, s.birth_date, s.phone, s.bubble, s.lightstick, s.code, s.received_at, s.admission_sequence, s.early";
     private static final String RANK_ORDER = "s.early, s.received_at, s.admission_sequence"; // same order as ReceiptStore.ranking
     private final JdbcTemplate jdbc;
     private final ReceiptStore store;
@@ -29,6 +29,7 @@ public class ArchivedResults {
     private static ReceiptStore.Receipt receipt(ResultSet rs) throws SQLException {
         return new ReceiptStore.Receipt(rs.getString("id"), rs.getString("form_id"), rs.getString("ticket_id"), rs.getString("name"),
                 Objects.toString(rs.getString("birth_date"), ""), rs.getString("phone"), Objects.toString(rs.getString("bubble"), ""),
+                Objects.toString(rs.getString("lightstick"), ""),
                 rs.getString("code").trim(), rs.getTimestamp("received_at").toInstant(), rs.getLong("admission_sequence"), rs.getBoolean("early"));
     }
 

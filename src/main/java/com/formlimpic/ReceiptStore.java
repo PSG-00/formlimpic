@@ -19,26 +19,33 @@ public final class ReceiptStore implements AutoCloseable {
             this(id, username, passwordHash, membershipCode, discordWebhookUrl, "USER", createdAt);
         }
     }
-    public record Form(String id, String owner, String title, String content, Instant startsAt, Instant expiresAt, boolean hasBubble, boolean adminCreated, boolean hasDelay) {
+    public record Form(String id, String owner, String title, String content, Instant startsAt, Instant expiresAt, boolean hasBubble, boolean hasLightstick, boolean adminCreated, boolean hasDelay) {
+        public Form(String id, String owner, String title, String content, Instant startsAt, Instant expiresAt, boolean hasBubble, boolean adminCreated, boolean hasDelay) {
+            this(id, owner, title, content, startsAt, expiresAt, hasBubble, false, adminCreated, hasDelay);
+        }
         public Form(String id, String owner, String title, String content, Instant startsAt, Instant expiresAt, boolean hasBubble, boolean adminCreated) {
-            this(id, owner, title, content, startsAt, expiresAt, hasBubble, adminCreated, true);
+            this(id, owner, title, content, startsAt, expiresAt, hasBubble, false, adminCreated, true);
         }
         public Form(String id, String owner, String title, String content, Instant startsAt, Instant expiresAt, boolean hasBubble) {
-            this(id, owner, title, content, startsAt, expiresAt, hasBubble, false, true);
+            this(id, owner, title, content, startsAt, expiresAt, hasBubble, false, false, true);
         }
         public Form(String id, String owner, String title, String content, Instant startsAt, Instant expiresAt) {
-            this(id, owner, title, content, startsAt, expiresAt, false, false, true);
+            this(id, owner, title, content, startsAt, expiresAt, false, false, false, true);
         }
         public Form(String id, String title, String content, Instant startsAt, Instant expiresAt) {
-            this(id, "", title, content, startsAt, expiresAt, false, false, true);
+            this(id, "", title, content, startsAt, expiresAt, false, false, false, true);
         }
     }
     public record Ticket(String id, String formId, String owner, String code) {}
-    public record Receipt(String id, String formId, String ticketId, String name, String birthDate, String phone, String bubble,
+    public record Receipt(String id, String formId, String ticketId, String name, String birthDate, String phone, String bubble, String lightstick,
                           String code, Instant receivedAt, long sequence, boolean early) {
+        public Receipt(String id, String formId, String ticketId, String name, String birthDate, String phone, String bubble,
+                       String code, Instant receivedAt, long sequence, boolean early) {
+            this(id, formId, ticketId, name, birthDate, phone, bubble, "", code, receivedAt, sequence, early);
+        }
         public Receipt(String id, String formId, String ticketId, String name, String phone,
                        String code, Instant receivedAt, long sequence, boolean early) {
-            this(id, formId, ticketId, name, "", phone, "", code, receivedAt, sequence, early);
+            this(id, formId, ticketId, name, "", phone, "", "", code, receivedAt, sequence, early);
         }
     }
     public record SubmissionSummary(Form form, Ticket ticket, Receipt receipt, int rank) {}
@@ -340,7 +347,9 @@ public final class ReceiptStore implements AutoCloseable {
                     }
                 }
                 boolean hasDelay = Boolean.parseBoolean(p.getProperty("hasDelay", "true"));
-                forms.put(id, new Form(id, owner, p.getProperty("title"), p.getProperty("content"), Instant.parse(p.getProperty("start")), Instant.parse(p.getProperty("end")), Boolean.parseBoolean(p.getProperty("hasBubble", "false")), adminCreated, hasDelay));
+                boolean hasBubble = Boolean.parseBoolean(p.getProperty("hasBubble", "false"));
+                boolean hasLightstick = Boolean.parseBoolean(p.getProperty("hasLightstick", "false"));
+                forms.put(id, new Form(id, owner, p.getProperty("title"), p.getProperty("content"), Instant.parse(p.getProperty("start")), Instant.parse(p.getProperty("end")), hasBubble, hasLightstick, adminCreated, hasDelay));
             }
             case "form_deleted" -> {
                 forms.remove(id);
@@ -376,7 +385,7 @@ public final class ReceiptStore implements AutoCloseable {
                 if (archivedFormIds.contains(p.getProperty("form"))) return;
                 lastSequenceByForm.put(p.getProperty("form"), e.sequence());
                 Ticket t = tickets.get(p.getProperty("ticket"));
-                Receipt r = new Receipt(id, t != null ? t.formId() : p.getProperty("form"), t != null ? t.id() : p.getProperty("ticket"), p.getProperty("name"), p.getProperty("birthDate", ""), p.getProperty("phone"), p.getProperty("bubble", ""), t != null ? t.code() : p.getProperty("code"), Instant.parse(p.getProperty("time")), e.sequence(), Boolean.parseBoolean(p.getProperty("early")));
+                Receipt r = new Receipt(id, t != null ? t.formId() : p.getProperty("form"), t != null ? t.id() : p.getProperty("ticket"), p.getProperty("name"), p.getProperty("birthDate", ""), p.getProperty("phone"), p.getProperty("bubble", ""), p.getProperty("lightstick", ""), t != null ? t.code() : p.getProperty("code"), Instant.parse(p.getProperty("time")), e.sequence(), Boolean.parseBoolean(p.getProperty("early")));
                 receipts.put(r.ticketId(), r);
                 receiptsByForm.computeIfAbsent(r.formId(), k -> new ArrayList<>()).add(r);
             }
@@ -403,12 +412,21 @@ public final class ReceiptStore implements AutoCloseable {
     public void deleteForm(String formId) { durable(() -> { deleteFormLocked(formId); return null; }); }
     public User updateUserPassword(String userId, String passwordHash) { return durable(() -> updateUserPasswordLocked(userId, passwordHash)); }
     public Form create(String owner, String title, String content, Instant start, Instant end, boolean hasBubble, boolean hasDelay) {
-        return durable(() -> createLocked(owner, title, content, start, end, hasBubble, hasDelay));
+        return create(owner, title, content, start, end, hasBubble, false, hasDelay);
+    }
+    public Form create(String owner, String title, String content, Instant start, Instant end, boolean hasBubble, boolean hasLightstick, boolean hasDelay) {
+        return durable(() -> createLocked(owner, title, content, start, end, hasBubble, hasLightstick, hasDelay));
     }
     public Ticket ticket(String formId, String owner) { return durable(() -> ticketLocked(formId, owner)); }
     /** time: the admission time the receipt is ranked by (server arrival + simulated network delay). */
     public Receipt submit(String formId, String owner, String name, String birthDate, String phone, String bubble, Instant time) {
-        return durable(() -> submitLocked(formId, owner, name, birthDate, phone, bubble, time));
+        return submit(formId, owner, name, birthDate, phone, bubble, "", time);
+    }
+    public Receipt submit(String formId, String owner, String name, String birthDate, String phone, String bubble, String lightstick) {
+        return submit(formId, owner, name, birthDate, phone, bubble, lightstick, now());
+    }
+    public Receipt submit(String formId, String owner, String name, String birthDate, String phone, String bubble, String lightstick, Instant time) {
+        return durable(() -> submitLocked(formId, owner, name, birthDate, phone, bubble, lightstick, time));
     }
     public User updateWebhook(String userId, String webhookUrl) { return durable(() -> updateWebhookLocked(userId, webhookUrl)); }
     public void markFormNotified(String formId) { durable(() -> { markFormNotifiedLocked(formId); return null; }); }
@@ -479,20 +497,20 @@ public final class ReceiptStore implements AutoCloseable {
     public synchronized Form form(String id) { Form f = forms.get(id); if (f == null) throw new IllegalArgumentException("폼림픽을 찾을 수 없습니다."); return f; }
     public Instant now() { return clock.instant(); }
     public Form create(String title, String content, Instant start, Instant end) {
-        return create("", title, content, start, end, false, true);
+        return create("", title, content, start, end, false, false, true);
     }
     public Form create(String owner, String title, String content, Instant start, Instant end) {
-        return create(owner, title, content, start, end, false, true);
+        return create(owner, title, content, start, end, false, false, true);
     }
     public Form create(String owner, String title, String content, Instant start, Instant end, boolean hasBubble) {
-        return create(owner, title, content, start, end, hasBubble, true);
+        return create(owner, title, content, start, end, hasBubble, false, true);
     }
-    private synchronized Form createLocked(String owner, String title, String content, Instant start, Instant end, boolean hasBubble, boolean hasDelay) {
+    private synchronized Form createLocked(String owner, String title, String content, Instant start, Instant end, boolean hasBubble, boolean hasLightstick, boolean hasDelay) {
         title = text(title, 120); content = text(content, 10000);
         if (start == null || end == null || !start.isAfter(now()) || !end.isAfter(start)) throw new IllegalArgumentException("시작은 현재 이후, 만료는 시작 이후여야 합니다.");
         String id = UUID.randomUUID().toString();
         boolean adminCreated = isOwnerAdmin(owner);
-        append(props("type", "form", "id", id, "owner", owner != null ? owner : "", "title", title, "content", content, "start", start.toString(), "end", end.toString(), "hasBubble", Boolean.toString(hasBubble), "adminCreated", Boolean.toString(adminCreated), "hasDelay", Boolean.toString(hasDelay)));
+        append(props("type", "form", "id", id, "owner", owner != null ? owner : "", "title", title, "content", content, "start", start.toString(), "end", end.toString(), "hasBubble", Boolean.toString(hasBubble), "hasLightstick", Boolean.toString(hasLightstick), "adminCreated", Boolean.toString(adminCreated), "hasDelay", Boolean.toString(hasDelay)));
         return forms.get(id);
     }
     private void open(Form f, Instant time) {
@@ -523,12 +541,12 @@ public final class ReceiptStore implements AutoCloseable {
         return receipts.get(t.id());
     }
     public Receipt submit(String formId, String owner, String name, String phone) {
-        return submit(formId, owner, name, "", phone, "");
+        return submit(formId, owner, name, "", phone, "", "");
     }
     public Receipt submit(String formId, String owner, String name, String birthDate, String phone, String bubble) {
-        return submit(formId, owner, name, birthDate, phone, bubble, now());
+        return submit(formId, owner, name, birthDate, phone, bubble, "", now());
     }
-    private synchronized Receipt submitLocked(String formId, String owner, String name, String birthDate, String phone, String bubble, Instant time) {
+    private synchronized Receipt submitLocked(String formId, String owner, String name, String birthDate, String phone, String bubble, String lightstick, Instant time) {
         Ticket t = ticketsByFormAndOwner.get(formId + "\0" + owner);
         if (t == null) throw new IllegalArgumentException("먼저 멤버십 코드를 발급받으세요.");
         Receipt existing = receipts.get(t.id());
@@ -537,11 +555,12 @@ public final class ReceiptStore implements AutoCloseable {
         birthDate = optionalText(birthDate, 30);
         phone = text(phone, 30);
         bubble = optionalText(bubble, 50);
+        lightstick = optionalText(lightstick, 20);
         Form f = form(formId);
         // Too late to be processed even if it arrived in time: results may already be published
         if (!now().isBefore(resultsAt(f))) throw new IllegalArgumentException("신청이 마감되었습니다.");
         open(f, time);
-        append(props("type", "receipt", "id", UUID.randomUUID().toString(), "form", formId, "ticket", t.id(), "name", name, "birthDate", birthDate, "phone", phone, "bubble", bubble, "code", t.code(), "time", time.toString(), "early", Boolean.toString(time.isBefore(f.startsAt()))));
+        append(props("type", "receipt", "id", UUID.randomUUID().toString(), "form", formId, "ticket", t.id(), "name", name, "birthDate", birthDate, "phone", phone, "bubble", bubble, "lightstick", lightstick, "code", t.code(), "time", time.toString(), "early", Boolean.toString(time.isBefore(f.startsAt()))));
         return receipts.get(t.id());
     }
     public static Instant resultsAt(Form f) { return f.expiresAt().plus(RESULTS_FINALIZE_DELAY); }

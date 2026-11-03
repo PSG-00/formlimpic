@@ -86,10 +86,11 @@ class WebApiAuthTests {
                         .session(session)
                         .header("X-Formlimpic", "formlimpic")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"title\":\"선착순 이벤트\",\"content\":\"상세 설명\",\"startsAt\":\"" + nowPlus1h + "\",\"expiresAt\":\"" + nowPlus2h + "\",\"hasBubble\":true}"))
+                        .content("{\"title\":\"선착순 이벤트\",\"content\":\"상세 설명\",\"startsAt\":\"" + nowPlus1h + "\",\"expiresAt\":\"" + nowPlus2h + "\",\"hasBubble\":true,\"hasLightstick\":true}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.title").value("선착순 이벤트"))
-                .andExpect(jsonPath("$.hasBubble").value(true));
+                .andExpect(jsonPath("$.hasBubble").value(true))
+                .andExpect(jsonPath("$.hasLightstick").value(true));
 
         // 6. My forms
         mockMvc.perform(get("/api/my/forms").session(session))
@@ -166,7 +167,7 @@ class WebApiAuthTests {
             mockMvc.perform(post("/api/forms/" + f.id() + "/ticket").session(session).header("X-Formlimpic", "formlimpic"))
                     .andExpect(status().isOk());
         }
-        String body = "{\"name\":\"홍길동\",\"birthDate\":\"000101\",\"phone\":\"01012345678\",\"bubble\":\"\"}";
+        String body = "{\"name\":\"홍길동\",\"birthDate\":\"000101\",\"phone\":\"01012345678\",\"bubble\":\"\",\"lightstick\":\"있음\"}";
 
         // Clicked 50ms before start: simulated delay 80~120ms lands it after start (선입력 성공)
         Instant arrival = start.minusMillis(50);
@@ -180,7 +181,9 @@ class WebApiAuthTests {
                 .andReturn();
         mockMvc.perform(asyncDispatch(pending))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.early").value(false));
+                .andExpect(jsonPath("$.early").value(false))
+                .andExpect(jsonPath("$.lightstick").value("있음"));
+        assertEquals("있음", store.mine(delayed.id(), userId).lightstick());
         long admittedAfterArrival = Duration.between(arrival, store.mine(delayed.id(), userId).receivedAt()).toMillis();
         assertTrue(admittedAfterArrival >= 80 && admittedAfterArrival <= 120, "admitted " + admittedAfterArrival + "ms after arrival");
 

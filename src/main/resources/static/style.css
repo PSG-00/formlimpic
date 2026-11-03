@@ -1159,3 +1159,46 @@ footer#site-footer {
   font-weight: 600;
   text-decoration: underline;
 }
+
+/* ==========================================================================
+   Exclusive Choice Options (응원봉 실물 소지 여부 단일 선택)
+   ========================================================================== */
+.choice-group {
+  display: flex;
+  gap: 16px;
+  margin: 24px 0;
+}
+.choice-option {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 20px 24px;
+  border: 2px solid #dedbd8;
+  border-radius: 12px;
+  background: #fafafa;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 700;
+  color: #202126;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+.choice-option:hover {
+  border-color: #ed52b6;
+  background: #fffbfe;
+}
+.choice-option input[type="radio"] {
+  width: 20px;
+  height: 20px;
+  accent-color: #ed52b6;
+  margin: 0;
+  cursor: pointer;
+}
+.choice-option:has(input[type="radio"]:checked),
+.choice-option.selected {
+  border-color: #ed52b6;
+  background: #fff0f8;
+  color: #a33680;
+}

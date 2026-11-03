@@ -306,6 +306,42 @@ class ReceiptStoreTests {
         }
     }
 
+    @Test void lightstickOptionAndSubmissionRecovery() throws Exception {
+        TestClock clock = new TestClock(); Path path = dir.resolve("lightstick_journal");
+        String formWithLightstickId; String formWithoutLightstickId; String userId;
+        try (ReceiptStore s = new ReceiptStore(path, clock)) {
+            var user = s.registerUser("lightstickUser", "hash");
+            userId = user.id();
+            var f1 = s.create(userId, "Lightstick Form", "content", clock.value.plusSeconds(5), clock.value.plusSeconds(20), false, true, true);
+            var f2 = s.create(userId, "No Lightstick Form", "content", clock.value.plusSeconds(5), clock.value.plusSeconds(20), false, false, true);
+            formWithLightstickId = f1.id();
+            formWithoutLightstickId = f2.id();
+            assertTrue(f1.hasLightstick());
+            assertFalse(f2.hasLightstick());
+
+            clock.value = clock.value.plusSeconds(10);
+            s.ticket(formWithLightstickId, userId);
+            var receipt = s.submit(formWithLightstickId, userId, "Eva", "030303", "010-1234-5678", "", "있음");
+            assertEquals("Eva", receipt.name());
+            assertEquals("030303", receipt.birthDate());
+            assertEquals("010-1234-5678", receipt.phone());
+            assertEquals("있음", receipt.lightstick());
+        }
+        try (ReceiptStore restored = new ReceiptStore(path, clock)) {
+            var restoredF1 = restored.form(formWithLightstickId);
+            var restoredF2 = restored.form(formWithoutLightstickId);
+            assertTrue(restoredF1.hasLightstick());
+            assertFalse(restoredF2.hasLightstick());
+
+            var restoredReceipt = restored.mine(formWithLightstickId, userId);
+            assertNotNull(restoredReceipt);
+            assertEquals("Eva", restoredReceipt.name());
+            assertEquals("030303", restoredReceipt.birthDate());
+            assertEquals("010-1234-5678", restoredReceipt.phone());
+            assertEquals("있음", restoredReceipt.lightstick());
+        }
+    }
+
     @Test
     void formDelayOption() throws Exception {
         TestClock clock = new TestClock();

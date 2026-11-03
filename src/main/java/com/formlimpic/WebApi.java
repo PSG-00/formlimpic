@@ -93,10 +93,13 @@ public class WebApi {
         return store.isArchived(formId) ? archive().mine(formId, owner) : store.mine(formId, owner);
     }
 
-    record NewForm(String title, String content, Instant startsAt, Instant expiresAt, Boolean hasBubble, Boolean hasDelay) {}
-    record Answer(String name, String birthDate, String phone, String bubble) {
+    record NewForm(String title, String content, Instant startsAt, Instant expiresAt, Boolean hasBubble, Boolean hasLightstick, Boolean hasDelay) {}
+    record Answer(String name, String birthDate, String phone, String bubble, String lightstick) {
+        public Answer(String name, String birthDate, String phone, String bubble) {
+            this(name, birthDate, phone, bubble, "");
+        }
         public Answer(String name, String phone) {
-            this(name, "", phone, "");
+            this(name, "", phone, "", "");
         }
     }
     /** What the list pages draw. The body text and owner id are only sent by the detail endpoint. */
@@ -250,8 +253,9 @@ public class WebApi {
             throw new IllegalArgumentException("현재 관리자만 폼림픽을 개설할 수 있습니다.");
         }
         boolean hasBubble = f.hasBubble() != null && f.hasBubble();
+        boolean hasLightstick = f.hasLightstick() != null && f.hasLightstick();
         boolean hasDelay = f.hasDelay() == null || f.hasDelay();
-        return store.create(user.id(), f.title(), f.content(), f.startsAt(), f.expiresAt(), hasBubble, hasDelay);
+        return store.create(user.id(), f.title(), f.content(), f.startsAt(), f.expiresAt(), hasBubble, hasLightstick, hasDelay);
     }
 
     @DeleteMapping("/forms/{id}")
@@ -297,7 +301,7 @@ public class WebApi {
         Instant arrivedAt = req.getAttribute(ArrivalTimeFilter.ATTRIBUTE) instanceof Instant t ? t : store.now();
         int delay = form.hasDelay() ? simulatedDelayMs(Duration.between(form.startsAt(), arrivedAt).toMillis()) : 0;
         Instant admittedAt = arrivedAt.plusMillis(delay);
-        ReceiptStore.Receipt receipt = store.submit(id, user.id(), a.name(), a.birthDate(), a.phone(), a.bubble(), admittedAt);
+        ReceiptStore.Receipt receipt = store.submit(id, user.id(), a.name(), a.birthDate(), a.phone(), a.bubble(), a.lightstick(), admittedAt);
 
         long wait = Duration.between(store.now(), admittedAt).toMillis();
         if (wait <= 0) return receipt;

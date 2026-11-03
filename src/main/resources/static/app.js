@@ -523,6 +523,7 @@ async function renderMyPage(tab = 'submissions') {
             <dt>멤버십 코드</dt><dd><strong>${s.ticket.code}</strong></dd>
             <dt>신청 이름</dt><dd>${esc(r.name)}</dd>
             ${r.birthDate ? `<dt>생년월일</dt><dd>${esc(r.birthDate)}</dd>` : ''}
+            ${r.lightstick ? `<dt>응원봉 실물(Ver.1)</dt><dd>${esc(r.lightstick)}</dd>` : ''}
             ${r.bubble ? `<dt>버블</dt><dd>${esc(r.bubble)}</dd>` : ''}
             <dt>최종 결과</dt>
             <dd>
@@ -629,6 +630,11 @@ function renderCreate() {
           </label>
         </div>
         <label class="checkbox-field">
+          <input name="hasLightstick" type="checkbox">
+          <span>응원봉 실물(Ver.1) 소지 여부 질문 포함</span>
+        </label>
+        <p class="small muted" style="margin-top:-2px;margin-bottom:14px;">체크 시 폼 신청 시 응원봉 실물(Ver.1) 소지 여부 선택란이 추가됩니다.</p>
+        <label class="checkbox-field">
           <input name="hasBubble" type="checkbox">
           <span>버블(Bubble) 항목 추가</span>
         </label>
@@ -658,6 +664,7 @@ function renderCreate() {
         content: f.get('content'),
         startsAt: new Date(f.get('start')).toISOString(),
         expiresAt: new Date(f.get('end')).toISOString(),
+        hasLightstick: f.get('hasLightstick') === 'on',
         hasBubble: f.get('hasBubble') === 'on',
         hasDelay: f.get('hasDelay') === 'on'
       });
@@ -815,6 +822,7 @@ function showMine(r) {
       <dt>이름</dt><dd>${esc(r.name)}</dd>
       ${r.birthDate ? `<dt>생년월일</dt><dd>${esc(r.birthDate)}</dd>` : ''}
       <dt>연락처</dt><dd>${esc(r.phone)}</dd>
+      ${r.lightstick ? `<dt>응원봉 실물(Ver.1)</dt><dd>${esc(r.lightstick)}</dd>` : ''}
       ${r.bubble ? `<dt>버블</dt><dd>${esc(r.bubble)}</dd>` : ''}
       <dt>접수 시각</dt><dd>${date(r.receivedAt)}.${String(new Date(r.receivedAt).getMilliseconds()).padStart(3, '0')}</dd>
       <dt>접수 구분</dt><dd>${r.early ? '조기 제출 · 정상 신청자 뒤 배정' : '정상 접수'}</dd>
@@ -831,16 +839,69 @@ async function renderWizard(id) {
   }
   const t = await api('/forms/' + id + '/ticket', 'POST');
   const hasBubble = !!d.form.hasBubble;
-  const totalSteps = hasBubble ? 5 : 4;
+  const hasLightstick = !!d.form.hasLightstick;
+  const steps = ['ticket', 'name', 'birthDate', 'phone'];
+  if (hasLightstick) steps.push('lightstick');
+  if (hasBubble) steps.push('bubble');
+  const totalSteps = steps.length;
   let step = 0;
   const key = 'draft:' + id + ':' + (currentUser ? currentUser.id : '');
-  let draft = { name: '', birthDate: '', phone: '', bubble: '' };
+  let draft = { name: '', birthDate: '', phone: '', bubble: '', lightstick: '' };
   try {
     draft = { ...draft, ...JSON.parse(sessionStorage.getItem(key)) };
   } catch {}
 
   const render = () => {
     const isLastStep = step === totalSteps - 1;
+    const curStep = steps[step];
+    let stepContent = '';
+    if (curStep === 'ticket') {
+      stepContent = `
+        <p class="muted">나의 고유 멤버십 코드 · 자동 적용</p>
+        <h2>팬클럽 멤버십 번호 (6자리)</h2>
+        <input readonly value="${t.code}" aria-label="멤버십 코드">
+        <p class="small">회원님의 고유 멤버십 코드가 중복 없이 자동으로 적용되었습니다.</p>
+      `;
+    } else if (curStep === 'name') {
+      stepContent = `
+        <h2>이름 *</h2>
+        <div class="notice">절대 실제 개인정보를 적지 마세요. 가상의 이름을 입력하세요.</div>
+        <input name="name" maxlength="40" required value="${esc(draft.name)}" placeholder="예: 토끼" autocomplete="off" autofocus>
+      `;
+    } else if (curStep === 'birthDate') {
+      stepContent = `
+        <h2>생년월일 *</h2>
+        <div class="notice">절대 실제 개인정보를 적지 마세요. 가상의 생년월일을 입력하세요.</div>
+        <input name="birthDate" maxlength="20" required value="${esc(draft.birthDate)}" placeholder="예: 000101 (YYMMDD 6자리)" autocomplete="off" autofocus>
+      `;
+    } else if (curStep === 'phone') {
+      stepContent = `
+        <h2>연락처 *</h2>
+        <div class="notice">절대 실제 개인정보를 적지 마세요. 실제 전화번호 대신 가상 값을 입력하세요.</div>
+        <input name="phone" maxlength="30" required value="${esc(draft.phone)}" placeholder="예: 01012345678" autocomplete="off" autofocus>
+      `;
+    } else if (curStep === 'lightstick') {
+      stepContent = `
+        <h2>응원봉 실물(Ver.1) 소지 여부 *</h2>
+        <div class="notice">응원봉 실물(Ver.1) 소지 여부를 선택해주세요. (단일 선택)</div>
+        <div class="choice-group">
+          <label class="choice-option ${draft.lightstick === '있음' ? 'selected' : ''}">
+            <input type="radio" name="lightstick" value="있음" required ${draft.lightstick === '있음' ? 'checked' : ''}>
+            <span class="choice-text">있음</span>
+          </label>
+          <label class="choice-option ${draft.lightstick === '없음' ? 'selected' : ''}">
+            <input type="radio" name="lightstick" value="없음" required ${draft.lightstick === '없음' ? 'checked' : ''}>
+            <span class="choice-text">없음</span>
+          </label>
+        </div>
+      `;
+    } else if (curStep === 'bubble') {
+      stepContent = `
+        <h2>버블(Bubble) *</h2>
+        <input name="bubble" maxlength="50" required value="${esc(draft.bubble)}" placeholder="예: 원이" autocomplete="off" autofocus>
+      `;
+    }
+
     app.innerHTML = `
       <div class="wizard">
         <div class="actions">
@@ -850,27 +911,7 @@ async function renderWizard(id) {
         <div class="progress"><div style="width:${((step + 1) / totalSteps) * 100}%"></div></div>
         <form id="answer">
           <div class="step">
-            ${step === 0 ? `
-              <p class="muted">나의 고유 멤버십 코드 · 자동 적용</p>
-              <h2>팬클럽 멤버십 번호 (6자리)</h2>
-              <input readonly value="${t.code}" aria-label="멤버십 코드">
-              <p class="small">회원님의 고유 멤버십 코드가 중복 없이 자동으로 적용되었습니다.</p>
-            ` : step === 1 ? `
-              <h2>이름 *</h2>
-              <div class="notice">절대 실제 개인정보를 적지 마세요. 가상의 이름을 입력하세요.</div>
-              <input name="name" maxlength="40" required value="${esc(draft.name)}" placeholder="예: 토끼" autocomplete="off" autofocus>
-            ` : step === 2 ? `
-              <h2>생년월일 *</h2>
-              <div class="notice">절대 실제 개인정보를 적지 마세요. 가상의 생년월일을 입력하세요.</div>
-              <input name="birthDate" maxlength="20" required value="${esc(draft.birthDate)}" placeholder="예: 000101 (YYMMDD 6자리)" autocomplete="off" autofocus>
-            ` : step === 3 ? `
-              <h2>연락처 *</h2>
-              <div class="notice">절대 실제 개인정보를 적지 마세요. 실제 전화번호 대신 가상 값을 입력하세요.</div>
-              <input name="phone" maxlength="30" required value="${esc(draft.phone)}" placeholder="예: 01012345678" autocomplete="off" autofocus>
-            ` : `
-              <h2>버블(Bubble) *</h2>
-              <input name="bubble" maxlength="50" required value="${esc(draft.bubble)}" placeholder="예: 원이" autocomplete="off" autofocus>
-            `}
+            ${stepContent}
           </div>
           <div class="actions">
             <button type="button" class="secondary" id="prev">${step ? '이전' : '닫기'}</button>
@@ -883,6 +924,17 @@ async function renderWizard(id) {
     // autofocus fallback
     const inp = document.querySelector('#answer input:not([readonly])');
     if (inp) inp.focus();
+
+    document.querySelectorAll('input[name="lightstick"]').forEach(r => {
+      r.onchange = () => {
+        save();
+        document.querySelectorAll('.choice-option').forEach(opt => {
+          const input = opt.querySelector('input[name="lightstick"]');
+          if (input && input.checked) opt.classList.add('selected');
+          else opt.classList.remove('selected');
+        });
+      };
+    });
 
     document.querySelector('#prev').onclick = () => {
       save();
@@ -922,6 +974,10 @@ async function renderWizard(id) {
     for (const k of ['name', 'birthDate', 'phone', 'bubble']) {
       const el = document.querySelector(`[name="${k}"]`);
       if (el) draft[k] = el.value;
+    }
+    const lightstickEl = document.querySelector('input[name="lightstick"]:checked');
+    if (lightstickEl) {
+      draft.lightstick = lightstickEl.value;
     }
     sessionStorage.setItem(key, JSON.stringify(draft));
   }
