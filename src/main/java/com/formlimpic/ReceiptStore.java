@@ -408,6 +408,7 @@ public final class ReceiptStore implements AutoCloseable {
     }
     // Writes: public methods wait for the disk outside the lock; the *Locked variants do the in-memory work.
     public User registerUser(String username, String passwordHash) { return durable(() -> registerUserLocked(username, passwordHash)); }
+    public User registerOrFindOauthUser(String username, String passwordHash) { return durable(() -> registerOrFindOauthUserLocked(username, passwordHash)); }
     public void setAdminOnlyFormCreation(boolean adminOnly) { durable(() -> { setAdminOnlyFormCreationLocked(adminOnly); return null; }); }
     public void deleteForm(String formId) { durable(() -> { deleteFormLocked(formId); return null; }); }
     public User updateUserPassword(String userId, String passwordHash) { return durable(() -> updateUserPasswordLocked(userId, passwordHash)); }
@@ -453,6 +454,19 @@ public final class ReceiptStore implements AutoCloseable {
     private synchronized User registerUserLocked(String username, String passwordHash) {
         username = text(username, 30);
         if (usersByUsername.containsKey(username)) throw new IllegalArgumentException("이미 사용 중인 아이디입니다.");
+        return createAndSaveUser(username, passwordHash);
+    }
+
+    private synchronized User registerOrFindOauthUserLocked(String username, String passwordHash) {
+        username = text(username, 30);
+        User existing = usersByUsername.get(username);
+        if (existing != null) {
+            return existing;
+        }
+        return createAndSaveUser(username, passwordHash);
+    }
+
+    private User createAndSaveUser(String username, String passwordHash) {
         if (usersByMembershipCode.size() >= 308915776) throw new IllegalStateException("발급 가능한 멤버십 코드가 소진되었습니다.");
         String code;
         do {

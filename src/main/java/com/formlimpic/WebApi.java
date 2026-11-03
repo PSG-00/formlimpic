@@ -36,6 +36,7 @@ public class WebApi {
     private final ReceiptStore store;
     private final PasswordEncoder encoder;
     private final DiscordWebhookService discordService;
+    private final KakaoAuthService kakaoAuthService;
     private final ScheduledExecutorService responseDelay = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "submit-response-delay");
         t.setDaemon(true);
@@ -70,15 +71,16 @@ public class WebApi {
     }
 
     WebApi(ReceiptStore store, PasswordEncoder encoder, DiscordWebhookService discordService) {
-        this(store, encoder, discordService, null);
+        this(store, encoder, discordService, null, null);
     }
 
     @Autowired
-    WebApi(ReceiptStore store, PasswordEncoder encoder, DiscordWebhookService discordService, ArchivedResults archive) {
+    WebApi(ReceiptStore store, PasswordEncoder encoder, DiscordWebhookService discordService, ArchivedResults archive, @Autowired(required = false) KakaoAuthService kakaoAuthService) {
         this.store = store;
         this.encoder = encoder;
         this.discordService = discordService;
         this.archive = archive;
+        this.kakaoAuthService = kakaoAuthService;
     }
 
     // Finished forms are archived after a day: their submissions live only in PostgreSQL
@@ -176,6 +178,56 @@ public class WebApi {
         UserProfile profile = new UserProfile(user.id(), user.username(), user.membershipCode(), user.discordWebhookUrl(), user.role());
         session.setAttribute("auth_user", profile);
         return Map.of("user", profile);
+    }
+
+    @GetMapping("/auth/kakao/url")
+    Object kakaoLoginUrl(HttpServletRequest req) {
+        if (kakaoAuthService == null || !kakaoAuthService.isConfigured()) {
+            return Map.of("available", false);
+        }
+        String redirectUri = buildKakaoRedirectUri(req);
+        return Map.of("available", true, "url", kakaoAuthService.buildAuthorizeUrl(redirectUri));
+    }
+
+    @GetMapping("/auth/kakao/callback")
+    void kakaoCallback(@RequestParam(required = false) String code,
+                       @RequestParam(required = false) String error,
+                       HttpServletRequest req,
+                       HttpServletResponse res) throws IOException {
+        if (error != null || code == null || code.isBlank() || kakaoAuthService == null || !kakaoAuthService.isConfigured()) {
+            res.sendRedirect("/#login?kakaoError=cancel");
+            return;
+        }
+
+        try {
+            String redirectUri = buildKakaoRedirectUri(req);
+            KakaoAuthService.KakaoUser kakaoUser = kakaoAuthService.fetchUserInfo(code, redirectUri);
+            String username = "kakao_" + kakaoUser.id();
+            // OAuth 계정용 난수 패스워드 해시 (직접 로그인 불가, 카카오 인증 통해서만 로그인)
+            String randomPasswordHash = encoder.encode(UUID.randomUUID().toString());
+            ReceiptStore.User user = store.registerOrFindOauthUser(username, randomPasswordHash);
+
+            UserProfile profile = new UserProfile(user.id(), user.username(), user.membershipCode(), user.discordWebhookUrl(), user.role());
+            req.getSession().setAttribute("auth_user", profile);
+            res.sendRedirect("/#mypage");
+        } catch (Exception e) {
+            res.sendRedirect("/#login?kakaoError=fail");
+        }
+    }
+
+    private String buildKakaoRedirectUri(HttpServletRequest req) {
+        String proto = req.getHeader("X-Forwarded-Proto");
+        if (proto == null || proto.isBlank()) {
+            proto = req.isSecure() ? "https" : "http";
+        }
+        String host = req.getHeader("X-Forwarded-Host");
+        if (host == null || host.isBlank()) {
+            host = req.getHeader("Host");
+        }
+        if (host == null || host.isBlank()) {
+            host = "formlimpic.rescene.online";
+        }
+        return proto + "://" + host + "/api/auth/kakao/callback";
     }
 
     @PutMapping("/my/webhook")

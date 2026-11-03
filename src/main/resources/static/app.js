@@ -134,11 +134,31 @@ async function route() {
 }
 
 function renderLogin() {
+  const kakaoError = new URLSearchParams(location.hash.split('?')[1] || '').get('kakaoError');
+  if (kakaoError === 'cancel') {
+    setTimeout(() => toast('카카오 로그인이 취소되었습니다.'), 100);
+  } else if (kakaoError === 'fail') {
+    setTimeout(() => toast('카카오 로그인 중 오류가 발생했습니다. 다시 시도해주세요.'), 100);
+  }
+
   app.innerHTML = `
     <div class="panel auth-box">
       <a class="back" href="#">← 홈으로</a>
       <h1>로그인</h1>
       <p>아이디와 비밀번호로 로그인하여 폼림픽에 참여하세요.</p>
+      
+      <div id="kakao-login-area" style="margin-bottom:16px;">
+        <button type="button" id="btn-kakao-login" class="btn-kakao" style="width:100%;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="#381E1F" style="vertical-align:middle;margin-right:8px;">
+            <path d="M12 3c-4.97 0-9 3.185-9 7.115 0 2.557 1.707 4.8 4.27 6.054-.188.702-.682 2.545-.78 2.94-.122.49.179.483.377.351.156-.104 2.48-1.685 3.486-2.37.53.076 1.077.116 1.647.116 4.97 0 9-3.185 9-7.115S16.97 3 12 3z"/>
+          </svg>
+          카카오로 3초 만에 시작하기
+        </button>
+        <div class="auth-divider">
+          <span>또는 일반 로그인</span>
+        </div>
+      </div>
+
       <form id="login-form">
         <label class="field">
           <span>아이디</span>
@@ -155,6 +175,26 @@ function renderLogin() {
       </p>
     </div>
   `;
+
+  const btnKakao = document.querySelector('#btn-kakao-login');
+  if (btnKakao) {
+    btnKakao.onclick = async () => {
+      btnKakao.disabled = true;
+      try {
+        const res = await api('/auth/kakao/url');
+        if (res.available && res.url) {
+          location.href = res.url;
+        } else {
+          toast('카카오 로그인이 아직 서버에 설정되지 않았습니다.');
+          btnKakao.disabled = false;
+        }
+      } catch (err) {
+        toast('카카오 로그인 연결 실패: ' + err.message);
+        btnKakao.disabled = false;
+      }
+    };
+  }
+
   document.querySelector('#login-form').onsubmit = async e => {
     e.preventDefault();
     const b = e.submitter;
@@ -181,6 +221,19 @@ function renderSignup() {
       <a class="back" href="#">← 홈으로</a>
       <h1>회원가입</h1>
       <p>비밀번호는 BCrypt로 암호화되어 원본이 저장되지 않습니다.<br>그러나 실제 사용하는 아이디나 비밀번호를 사용하는 것은 비추천합니다.</p>
+      
+      <div id="kakao-signup-area" style="margin-bottom:16px;">
+        <button type="button" id="btn-kakao-signup" class="btn-kakao" style="width:100%;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="#381E1F" style="vertical-align:middle;margin-right:8px;">
+            <path d="M12 3c-4.97 0-9 3.185-9 7.115 0 2.557 1.707 4.8 4.27 6.054-.188.702-.682 2.545-.78 2.94-.122.49.179.483.377.351.156-.104 2.48-1.685 3.486-2.37.53.076 1.077.116 1.647.116 4.97 0 9-3.185 9-7.115S16.97 3 12 3z"/>
+          </svg>
+          카카오로 3초 만에 시작하기
+        </button>
+        <div class="auth-divider">
+          <span>또는 일반 회원가입</span>
+        </div>
+      </div>
+
       <form id="signup-form">
         <label class="field">
           <span>아이디</span>
@@ -200,6 +253,26 @@ function renderSignup() {
       </p>
     </div>
   `;
+
+  const btnKakaoSignup = document.querySelector('#btn-kakao-signup');
+  if (btnKakaoSignup) {
+    btnKakaoSignup.onclick = async () => {
+      btnKakaoSignup.disabled = true;
+      try {
+        const res = await api('/auth/kakao/url');
+        if (res.available && res.url) {
+          location.href = res.url;
+        } else {
+          toast('카카오 로그인이 아직 서버에 설정되지 않았습니다.');
+          btnKakaoSignup.disabled = false;
+        }
+      } catch (err) {
+        toast('카카오 로그인 연결 실패: ' + err.message);
+        btnKakaoSignup.disabled = false;
+      }
+    };
+  }
+
   document.querySelector('#signup-form').onsubmit = async e => {
     e.preventDefault();
     const b = e.submitter;

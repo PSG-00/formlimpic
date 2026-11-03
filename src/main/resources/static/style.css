@@ -1202,3 +1202,51 @@ footer#site-footer {
   background: #fff0f8;
   color: #a33680;
 }
+
+/* ==========================================================================
+   Kakao Login Button & Divider
+   ========================================================================== */
+.btn-kakao {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #FEE500;
+  color: #191919;
+  border: none;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, transform 0.1s ease;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+.btn-kakao:hover {
+  background-color: #FADA0A;
+}
+.btn-kakao:active {
+  transform: scale(0.98);
+}
+.btn-kakao:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  margin: 18px 0 12px;
+}
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  border-bottom: 1px solid #e2deda;
+}
+.auth-divider span {
+  padding: 0 12px;
+  font-size: 12px;
+  color: #8c8884;
+}
+
