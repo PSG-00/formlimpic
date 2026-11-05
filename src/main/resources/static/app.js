@@ -596,7 +596,7 @@ async function renderMyPage(tab = 'submissions') {
             <dt>멤버십 코드</dt><dd><strong>${s.ticket.code}</strong></dd>
             <dt>신청 이름</dt><dd>${esc(r.name)}</dd>
             ${r.birthDate ? `<dt>생년월일</dt><dd>${esc(r.birthDate)}</dd>` : ''}
-            ${r.lightstick ? `<dt>응원봉 실물(Ver.1)</dt><dd>${esc(r.lightstick)}</dd>` : ''}
+            ${r.lightstick ? `<dt>응원봉 실물(Ver.1) 소지 여부 (있으면O, 없으면 X)</dt><dd>${esc(r.lightstick)}</dd>` : ''}
             ${r.bubble ? `<dt>버블</dt><dd>${esc(r.bubble)}</dd>` : ''}
             <dt>최종 결과</dt>
             <dd>
@@ -704,9 +704,9 @@ function renderCreate() {
         </div>
         <label class="checkbox-field">
           <input name="hasLightstick" type="checkbox">
-          <span>응원봉 실물(Ver.1) 소지 여부 질문 포함</span>
+          <span>응원봉 실물(Ver.1) 소지 여부 (있으면O, 없으면 X) 질문 포함</span>
         </label>
-        <p class="small muted" style="margin-top:-2px;margin-bottom:14px;">체크 시 폼 신청 시 응원봉 실물(Ver.1) 소지 여부 선택란이 추가됩니다.</p>
+        <p class="small muted" style="margin-top:-2px;margin-bottom:14px;">체크 시 폼 신청 시 응원봉 실물(Ver.1) 소지 여부 (있으면O, 없으면 X) 입력란이 추가됩니다.</p>
         <label class="checkbox-field">
           <input name="hasBubble" type="checkbox">
           <span>버블(Bubble) 항목 추가</span>
@@ -895,7 +895,7 @@ function showMine(r) {
       <dt>이름</dt><dd>${esc(r.name)}</dd>
       ${r.birthDate ? `<dt>생년월일</dt><dd>${esc(r.birthDate)}</dd>` : ''}
       <dt>연락처</dt><dd>${esc(r.phone)}</dd>
-      ${r.lightstick ? `<dt>응원봉 실물(Ver.1)</dt><dd>${esc(r.lightstick)}</dd>` : ''}
+      ${r.lightstick ? `<dt>응원봉 실물(Ver.1) 소지 여부 (있으면O, 없으면 X)</dt><dd>${esc(r.lightstick)}</dd>` : ''}
       ${r.bubble ? `<dt>버블</dt><dd>${esc(r.bubble)}</dd>` : ''}
       <dt>접수 시각</dt><dd>${date(r.receivedAt)}.${String(new Date(r.receivedAt).getMilliseconds()).padStart(3, '0')}</dd>
       <dt>접수 구분</dt><dd>${r.early ? '조기 제출 · 정상 신청자 뒤 배정' : '정상 접수'}</dd>
@@ -955,18 +955,9 @@ async function renderWizard(id) {
       `;
     } else if (curStep === 'lightstick') {
       stepContent = `
-        <h2>응원봉 실물(Ver.1) 소지 여부 *</h2>
-        <div class="notice">응원봉 실물(Ver.1) 소지 여부를 선택해주세요. (단일 선택)</div>
-        <div class="choice-group">
-          <label class="choice-option ${draft.lightstick === '있음' ? 'selected' : ''}">
-            <input type="radio" name="lightstick" value="있음" required ${draft.lightstick === '있음' ? 'checked' : ''}>
-            <span class="choice-text">있음</span>
-          </label>
-          <label class="choice-option ${draft.lightstick === '없음' ? 'selected' : ''}">
-            <input type="radio" name="lightstick" value="없음" required ${draft.lightstick === '없음' ? 'checked' : ''}>
-            <span class="choice-text">없음</span>
-          </label>
-        </div>
+        <h2>응원봉 실물(Ver.1) 소지 여부 (있으면O, 없으면 X) *</h2>
+        <div class="notice">응원봉 실물(Ver.1) 소지 여부를 입력해주세요. (있으면 O, 없으면 X)</div>
+        <input name="lightstick" maxlength="20" required value="${esc(draft.lightstick)}" placeholder="예: O 또는 X" autocomplete="off" autofocus>
       `;
     } else if (curStep === 'bubble') {
       stepContent = `
@@ -997,17 +988,6 @@ async function renderWizard(id) {
     // autofocus fallback
     const inp = document.querySelector('#answer input:not([readonly])');
     if (inp) inp.focus();
-
-    document.querySelectorAll('input[name="lightstick"]').forEach(r => {
-      r.onchange = () => {
-        save();
-        document.querySelectorAll('.choice-option').forEach(opt => {
-          const input = opt.querySelector('input[name="lightstick"]');
-          if (input && input.checked) opt.classList.add('selected');
-          else opt.classList.remove('selected');
-        });
-      };
-    });
 
     document.querySelector('#prev').onclick = () => {
       save();
@@ -1044,13 +1024,9 @@ async function renderWizard(id) {
   };
 
   function save() {
-    for (const k of ['name', 'birthDate', 'phone', 'bubble']) {
+    for (const k of ['name', 'birthDate', 'phone', 'bubble', 'lightstick']) {
       const el = document.querySelector(`[name="${k}"]`);
       if (el) draft[k] = el.value;
-    }
-    const lightstickEl = document.querySelector('input[name="lightstick"]:checked');
-    if (lightstickEl) {
-      draft.lightstick = lightstickEl.value;
     }
     sessionStorage.setItem(key, JSON.stringify(draft));
   }
